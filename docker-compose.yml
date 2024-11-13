@@ -1,0 +1,9 @@
+﻿services:
+  console-sharp:
+    image: console-sharp
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./ConsoleSharp/appsettings.json:/app/appsettings.json
+      - ./app.db:/app/app.db
