@@ -69,16 +69,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   
-  #  TODO: Complete this
   publish-docker:
     needs: release-please
-    uses: {OWNER}/{REPO}/.github/workflows/.publish-docker.yml@main
+    uses: HamidMolareza/TaskSorter/.github/workflows/.publish-docker.yml@main
     if: ${{needs.release-please.outputs.release_created}}
     with:
-      REPO_OWNER: {OWNER}
-      REPO_NAME: {REPO}
-      DOCKER_OWNER: {OWNER} # must lowercase
-      IMAGE_NAME: {REPO}
+      REPO_OWNER: HamidMolareza
+      REPO_NAME: TaskSorter
+      DOCKER_OWNER: hamidmolareza # must lowercase
+      IMAGE_NAME: task-sorter
       LICENSE: 'GPL-3.0'
       major: ${{needs.release-please.outputs.major}}
       minor: ${{needs.release-please.outputs.minor}}
