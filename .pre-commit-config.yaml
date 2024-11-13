@@ -25,9 +25,3 @@ repos:
     hooks:
       - id: document-oriented
         args: ['--doc=*.md', '--source=src/*']
-#      - id: run-scripts
-#        name: NAME
-#        args: [ "-f=path/to/script", "OTHER PARAMS" ]
-#        stages: [ push ]
-#        pass_filenames: false
-#        verbose: false
