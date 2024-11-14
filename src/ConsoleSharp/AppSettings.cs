@@ -1,6 +1,6 @@
 namespace ConsoleSharpTemplate;
 
 public class AppSettings {
-    public string RepositoryFile { get; set; }
-    public string LabelsFile { get; set; }
+    public string RepositoryFile { get; set; } = default!;
+    public string LabelsFile { get; set; } = default!;
 }
