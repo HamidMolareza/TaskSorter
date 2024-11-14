@@ -2,12 +2,13 @@ using System.IO.Abstractions.TestingHelpers;
 using ConsoleSharpTemplate;
 using Microsoft.Extensions.Logging;
 using Moq;
+using OnRail.ResultDetails.Errors;
 
 namespace TestConsoleSharp;
 
 public class AppTests {
     [Fact]
-    public async Task Run_GiveValidInputs() {
+    public async Task Run_GiveValidInputs_ReturnsOk() {
         // Arrange
         var mockLogger = new Mock<ILogger<App>>();
         var settings = AppTestsUtility.CreateSettings();
@@ -15,14 +16,17 @@ public class AppTests {
         var app = new App(mockLogger.Object, settings, fileSystem);
 
         // Act
-        await app.RunAsync();
+        var actual = await app.RunAsync();
+
+        //Assert
+        Assert.True(actual.IsSuccess);
     }
 
     [Theory]
     [InlineData("  ")]
     [InlineData(null)]
     [InlineData("invalid-path")]
-    public async Task Run_GiveInvalidRepoFile(string? repoFilePath) {
+    public async Task Run_GiveInvalidRepoFile_ReturnsValidationError(string? repoFilePath) {
         // Arrange
         var settings = AppTestsUtility.CreateSettings();
         settings.RepositoryFile = repoFilePath!;
@@ -32,52 +36,36 @@ public class AppTests {
         var app = new App(mockLogger.Object, settings, fileSystem);
 
         // Act
-        await app.RunAsync();
+        var result = await app.RunAsync();
 
         //Assert
-        mockLogger.Verify(
-            logger => logger.Log(
-                LogLevel.Error,
-                It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, t) =>
-                    v.ToString()!.Contains("is required.") &&
-                    v.ToString()!.Contains(nameof(settings.RepositoryFile))
-                ),
-                null,
-                ((Func<It.IsAnyType, Exception, string>)It.IsAny<object>())!
-            ),
-            Times.Once);
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.Detail);
+        Assert.IsType<ValidationError>(result.Detail);
+        Assert.Contains($"{nameof(settings.RepositoryFile)} is required.", result.Detail.Message);
     }
 
     [Theory]
     [InlineData("  ")]
     [InlineData(null)]
     [InlineData("invalid-path")]
-    public async Task Run_GiveInvalidLabelFile(string? labelFilePath) {
+    public async Task Run_GiveInvalidLabelFile_ReturnsValidationError(string? labelFilePath) {
         // Arrange
         var settings = AppTestsUtility.CreateSettings();
         settings.LabelsFile = labelFilePath!;
 
         var mockLogger = new Mock<ILogger<App>>();
-        var fileSystem = AppTestsUtility.CreateFileSystem([]);
+        var fileSystem = AppTestsUtility.CreateFileSystem([settings.RepositoryFile]);
         var app = new App(mockLogger.Object, settings, fileSystem);
 
         // Act
-        await app.RunAsync();
+        var result = await app.RunAsync();
 
         //Assert
-        mockLogger.Verify(
-            logger => logger.Log(
-                LogLevel.Error,
-                It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, t) =>
-                    v.ToString()!.Contains("is required.") &&
-                    v.ToString()!.Contains(nameof(settings.LabelsFile))
-                ),
-                null,
-                ((Func<It.IsAnyType, Exception, string>)It.IsAny<object>())!
-            ),
-            Times.Once);
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.Detail);
+        Assert.IsType<ValidationError>(result.Detail);
+        Assert.Contains($"{nameof(settings.LabelsFile)} is required.", result.Detail.Message);
     }
 }
 

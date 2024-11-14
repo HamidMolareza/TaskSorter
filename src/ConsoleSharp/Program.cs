@@ -3,6 +3,8 @@ using ConsoleSharpTemplate;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
+using OnRail.Extensions.OnFail;
+using OnRail.Extensions.OnSuccess;
 
 var services = new ServiceCollection();
 
@@ -35,8 +37,12 @@ var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
 logger.LogInformation("Application Starting...");
 
 try {
-    var exampleService = serviceProvider.GetRequiredService<App>();
-    await exampleService.RunAsync();
+    var app = serviceProvider.GetRequiredService<App>();
+    await app.RunAsync()
+        .OnSuccessTee(() => logger.LogDebug("Operations completed successfully."))
+        .OnFailTee(result => logger.LogError("{detail}",
+            result.Detail?.ToString() ?? "No Data!")
+        );
 }
 catch (Exception ex) {
     logger.LogError(ex, "An error occurred.");
