@@ -1,7 +1,7 @@
 using System.IO.Abstractions.TestingHelpers;
-using ConsoleSharpTemplate;
+using TaskSorter;
 
-namespace TestConsoleSharp;
+namespace TestTaskSorter;
 
 public class CommandLineTests {
     private readonly AppSettings _settings = new();

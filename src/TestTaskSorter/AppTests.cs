@@ -1,10 +1,10 @@
 using System.IO.Abstractions.TestingHelpers;
-using ConsoleSharpTemplate;
 using Microsoft.Extensions.Logging;
 using Moq;
 using OnRail.ResultDetails.Errors;
+using TaskSorter;
 
-namespace TestConsoleSharp;
+namespace TestTaskSorter;
 
 public class AppTests {
     [Fact]

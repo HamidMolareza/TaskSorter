@@ -1,6 +1,6 @@
 using System.IO.Abstractions;
 
-namespace ConsoleSharpTemplate.Helpers;
+namespace TaskSorter.Helpers;
 
 public static class Utility {
     public static bool IsFileExist(this IFileSystem fileSystem, string? path) =>

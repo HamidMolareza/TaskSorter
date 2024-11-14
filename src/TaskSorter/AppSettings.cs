@@ -1,4 +1,4 @@
-namespace ConsoleSharpTemplate;
+namespace TaskSorter;
 
 public class AppSettings {
     public string RepositoryFile { get; set; } = default!;

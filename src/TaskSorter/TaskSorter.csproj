@@ -6,7 +6,8 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
-        <RootNamespace>ConsoleSharpTemplate</RootNamespace>
+        <RootNamespace>TaskSorter</RootNamespace>
+        <AssemblyName>TaskSorter</AssemblyName>
     </PropertyGroup>
 
     <ItemGroup>
