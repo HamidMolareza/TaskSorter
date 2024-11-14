@@ -26,6 +26,7 @@ repos:
       - id: document-oriented
         args: ['--doc=*.md', '--source=src/*']
       - id: run-scripts
-        args: [ '-f=scripts/dotnet-coverage', '--line=50' ]
+        name: dotnet-coverage
+        args: [ '-f=scripts/dotnet-coverage.sh', '--line=50' ]
         stages: [ push ]
         pass_filenames: false
