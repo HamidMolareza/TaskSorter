@@ -26,7 +26,7 @@ services.AddSingleton(appSettings);
 await CommandLine.InvokeAsync(args, appSettings, new FileSystem());
 
 // Add application services
-services.AddTransient<ExampleService>();
+services.AddTransient<App>();
 
 // -----------------------------------------------------------------
 await using var serviceProvider = services.BuildServiceProvider();
@@ -35,7 +35,7 @@ var logger = serviceProvider.GetRequiredService<ILogger<Program>>();
 logger.LogInformation("Application Starting...");
 
 try {
-    var exampleService = serviceProvider.GetRequiredService<ExampleService>();
+    var exampleService = serviceProvider.GetRequiredService<App>();
     await exampleService.Run();
 }
 catch (Exception ex) {
