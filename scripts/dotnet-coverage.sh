@@ -11,7 +11,7 @@ trap 'rm -rf "$temp_folder"' EXIT
 #=================================================
 # Function to display usage information
 usage() {
-  echo "Usage: $(basename "$0") -l|--line <number> [-b|--branch <number>]"
+  echo "Usage: $(basename "$0") -l|--line <number> [-b|--branch <number>] [-s|--src /path/to/src]"
   exit 1
 }
 
