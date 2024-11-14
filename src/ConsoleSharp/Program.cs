@@ -1,4 +1,5 @@
 ﻿using ConsoleSharpTemplate;
+using ConsoleSharpTemplate.Helpers.FileService;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
@@ -22,7 +23,7 @@ var appSettings = configuration.GetSection("App")
 services.AddSingleton(appSettings);
 
 // Parse inputs and update the appSettings
-await CommandLine.InvokeAsync(args, appSettings);
+await CommandLine.InvokeAsync(args, appSettings, new FileService());
 
 // Add application services
 services.AddTransient<ExampleService>();
