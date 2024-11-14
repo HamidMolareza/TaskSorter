@@ -1,17 +1,23 @@
+using System.IO.Abstractions.TestingHelpers;
 using ConsoleSharpTemplate;
-using TestConsoleSharp.Mocks;
 
 namespace TestConsoleSharp;
 
 public class CommandLineTests {
     private readonly AppSettings _settings = new();
-    private readonly MockFileService _fileSystem = new();
+    private readonly MockFileSystem _fileSystem = new();
+
+    public CommandLineTests() {
+        _fileSystem.AddFile("exist-file-repo.txt", "");
+        _fileSystem.AddFile("exist-file-label.txt", "");
+    }
 
     [Fact]
     public async Task InvokeAsync_WithValidFiles_ReturnsSuccessCode() {
         // Arrange
         const string repoFilePath = "exist-file-repo.txt";
         const string labelsFilePath = "exist-file-label.txt";
+
         var args = new[] { "-r", repoFilePath, "-l", labelsFilePath };
 
         // Act
@@ -28,6 +34,7 @@ public class CommandLineTests {
         // Arrange
         const string repoFilePath = "";
         const string labelsFilePath = "exist-file-label.txt";
+
         var args = new[] { "-r", repoFilePath, "-l", labelsFilePath };
 
         // Act

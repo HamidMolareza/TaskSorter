@@ -1,10 +1,10 @@
 using System.CommandLine;
-using ConsoleSharpTemplate.Helpers.FileService;
+using System.IO.Abstractions;
 
 namespace ConsoleSharpTemplate;
 
 public static class CommandLine {
-    public static Task<int> InvokeAsync(string[] args, AppSettings settings, IFileService fileService) {
+    public static Task<int> InvokeAsync(string[] args, AppSettings settings, IFileSystem fileSystem) {
         var repoOption = new Option<string>(
             ["-r", "--repo"],
             () => settings.RepositoryFile,
@@ -14,7 +14,7 @@ public static class CommandLine {
             var value = result.GetValueOrDefault<string>();
             if (string.IsNullOrWhiteSpace(value))
                 result.ErrorMessage = "The repository file is required.";
-            else if (!fileService.Exists(value))
+            else if (!fileSystem.File.Exists(value))
                 result.ErrorMessage = "The repository file is not valid.";
         });
 
@@ -27,7 +27,7 @@ public static class CommandLine {
             var value = result.GetValueOrDefault<string>();
             if (string.IsNullOrWhiteSpace(value))
                 result.ErrorMessage = "The labels file is required.";
-            else if (!fileService.Exists(value))
+            else if (!fileSystem.File.Exists(value))
                 result.ErrorMessage = "The labels file is not valid.";
         });
 
