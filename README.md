@@ -5,7 +5,7 @@
 </h1>
 
 <div align="center">
-  TaskSorter
+  <h1>TaskSorter</h1>
   <br />
   <a href="#getting-started"><strong>Getting Started »</strong></a>
   <br />
@@ -261,11 +261,4 @@ _For more information and to report security issues, please refer to our [securi
 This project is licensed under the **GPLv3**.
 
 See [LICENSE](LICENSE) for more information.
-
-## Related
-
-Here are some related projects
-
-[Awesome README](https://github.com/matiassingers/awesome-readme)
-
 
