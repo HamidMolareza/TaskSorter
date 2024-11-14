@@ -1,7 +1,7 @@
 using System.CommandLine;
 using System.IO.Abstractions;
 
-namespace ConsoleSharpTemplate;
+namespace TaskSorter;
 
 public static class CommandLine {
     public static Task<int> InvokeAsync(string[] args, AppSettings settings, IFileSystem fileSystem) {

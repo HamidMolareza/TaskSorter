@@ -1,10 +1,10 @@
 ﻿using System.IO.Abstractions;
-using ConsoleSharpTemplate;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using OnRail.Extensions.OnFail;
 using OnRail.Extensions.OnSuccess;
+using TaskSorter;
 
 var services = new ServiceCollection();
 

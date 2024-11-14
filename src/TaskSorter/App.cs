@@ -1,10 +1,10 @@
 using System.IO.Abstractions;
-using ConsoleSharpTemplate.Helpers;
 using Microsoft.Extensions.Logging;
 using OnRail;
 using OnRail.ResultDetails.Errors;
+using TaskSorter.Helpers;
 
-namespace ConsoleSharpTemplate;
+namespace TaskSorter;
 
 public class App(ILogger<App> logger, AppSettings settings, IFileSystem fileSystem) {
     public async Task<Result> RunAsync() {

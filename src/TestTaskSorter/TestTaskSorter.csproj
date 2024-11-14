@@ -31,7 +31,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\ConsoleSharp\ConsoleSharp.csproj" />
+      <ProjectReference Include="..\TaskSorter\TaskSorter.csproj" />
     </ItemGroup>
 
 </Project>

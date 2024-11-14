@@ -1,7 +1,7 @@
 using System.IO.Abstractions.TestingHelpers;
-using ConsoleSharpTemplate.Helpers;
+using TaskSorter.Helpers;
 
-namespace TestConsoleSharp.Helpers;
+namespace TestTaskSorter.Helpers;
 
 public class UtilityTests {
     private readonly MockFileSystem _fileSystem = new();
