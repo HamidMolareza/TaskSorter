@@ -62,7 +62,7 @@ fi
 #=================================================
 # Run the tests and collect coverage
 echo "Running tests and collecting coverage..."
-dotnet test --collect:"XPlat Code Coverage" --results-directory "$temp_folder" "$src_path" || { echo "Tests failed. Exiting."; exit 1; }
+dotnet test --collect:"XPlat Code Coverage" --results-directory "$temp_folder" "$src_path" > /dev/null 2>&1 || { echo "Tests failed. Exiting."; exit 1; }
 
 # Find the generated coverage file (coverage.cobertura.xml)
 coverage_file="$(find "$temp_folder" -name "coverage.cobertura.xml")"
@@ -81,14 +81,12 @@ if [ "$line_rate" -lt "$line_threshold" ]; then
   exit 1
 fi
 
-if [ -z "$branch_threshold" ]; then
-  exit 0
-fi
-
-branch_rate=$(xmllint --xpath 'string(/coverage/@branch-rate)' "$coverage_file" | awk '{printf "%.0f\n", $1 * 100}')
-if [ "$branch_rate" -lt "$branch_threshold" ]; then
-  echo "Branch rate error: $branch_rate < $branch_threshold"
-  exit 1
+if [ -n "$branch_threshold" ]; then
+  branch_rate=$(xmllint --xpath 'string(/coverage/@branch-rate)' "$coverage_file" | awk '{printf "%.0f\n", $1 * 100}')
+  if [ "$branch_rate" -lt "$branch_threshold" ]; then
+    echo "Branch rate error: $branch_rate < $branch_threshold"
+    exit 1
+  fi
 fi
 
 echo -e "Line\tBranch"
