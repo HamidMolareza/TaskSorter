@@ -5,9 +5,8 @@ using Microsoft.Extensions.Logging;
 namespace ConsoleSharpTemplate;
 
 public class App(ILogger<App> logger, AppSettings settings, IFileSystem fileSystem) {
-    public async Task Run() {
+    public async Task RunAsync() {
         EnsureInputsAreValid();
-        throw new NotImplementedException();
     }
 
     private void EnsureInputsAreValid() {

@@ -36,7 +36,7 @@ logger.LogInformation("Application Starting...");
 
 try {
     var exampleService = serviceProvider.GetRequiredService<App>();
-    await exampleService.Run();
+    await exampleService.RunAsync();
 }
 catch (Exception ex) {
     logger.LogError(ex, "An error occurred.");
