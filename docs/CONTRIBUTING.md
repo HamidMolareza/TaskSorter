@@ -1,36 +1,31 @@
 # Contributing
 
-When contributing to this repository, please first discuss the change you wish to make via issue, email, or any other
+When contributing to this repository, please first discuss the change you wish to make via **issue**, email, or any
+other
 method with the owners of this repository before making a change. Please note we have
 a [code of conduct](CODE_OF_CONDUCT.md), please follow it in all your interactions with the project.
 
-## Development environment setup
+Below is a guide on setting up your development environment and submitting a pull request.
 
-> **[?]**
-> Proceed to describe how to setup local development environment.
-> e.g:
+### Development Environment Setup
 
-To set up a development environment, please follow these steps:
+1. **Clone the Repository**: Begin by cloning the TaskSorter repository.
 
-1. Clone the repo
-
-   ```sh
-   git clone https://github.com/GITHUB_USERNAME/REPO_SLUG
+   ```bash
+   git clone https://github.com/HamidMolareza/TaskSorter.git
+   cd tasksorter
    ```
 
-2. To run this project, you will need to add the following environment variables to your .env file
+2. **Ensure .NET SDK 8.0 is Installed**: TaskSorter requires .NET SDK 8.0.
 
-`API_KEY`
+3. **Install Git Hooks (Optional)**: If you’d like to use the provided Git hooks for better commit quality, run the
+   setup script:
 
-`ANOTHER_API_KEY`
+   ```bash
+   ./scripts/setup-hooks.sh
+   ```
 
-3. TODO
-
-4. Running Tests. To run tests, run the following command
-
-```bash
-  npm run test
-```
+   This script will set up pre-configured Git hooks to assist with linting and commit message formats.
 
 ## Issues and feature requests
 
@@ -47,16 +42,32 @@ Please try to create bug reports that are:
 
 **Even better: Submit a pull request with a fix or new feature!**
 
-### How to submit a Pull Request
+### How to Submit a Pull Request
 
-1. Search our repository for open or closed
-   [Pull Requests](https://github.com/GITHUB_USERNAME/REPO_SLUG/pulls)
-   that relate to your submission. You don't want to duplicate effort.
-2. Fork the project
-3. Create your feature branch (`git checkout -b feat/amazing_feature`)
-4. Commit your changes (`git commit -m 'feat: add amazing_feature'`)
+1. **Follow Conventional Commits**: This project uses [Conventional Commits](https://www.conventionalcommits.org/) for
+   clear, consistent commit messages. Some example commit messages:
 
-> This project uses [conventional commits](https://www.conventionalcommits.org), so please follow the specification in your commit messages.
+    - `feat: add support for new sorting option`
+    - `fix: resolve issue with priority score calculation`
+    - `docs: update README with usage instructions`
 
-5. Push to the branch (`git push origin feat/amazing_feature`)
-6. Open a Pull Request
+2. **Create a New Branch**: Work on a new branch for each feature or bug fix.
+
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+
+3. **Make Your Changes**: Develop your feature or fix while ensuring code quality and project standards are met.
+
+4. **Push Your Changes**: Once your changes are complete and tested, push the branch to the repository.
+
+   ```bash
+   git push origin feature/your-feature-name
+   ```
+
+5. **Open a Pull Request**: Go to the repository on GitHub, locate your newly pushed branch, and create a pull request.
+   Please include a clear description of the changes you’ve made and reference any related issues.
+
+6. **Review and Merge**: Once your pull request is reviewed and approved, it will be merged into the main codebase.
+
+Thank you for helping make TaskSorter better!
