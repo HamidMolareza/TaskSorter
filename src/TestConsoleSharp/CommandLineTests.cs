@@ -12,13 +12,15 @@ public class CommandLineTests {
         _fileSystem.AddFile("exist-file-label.txt", "");
     }
 
-    [Fact]
-    public async Task InvokeAsync_WithValidFiles_ReturnsSuccessCode() {
+    [Theory]
+    [InlineData("-r", "-l")]
+    [InlineData("--repo", "--labels")]
+    public async Task InvokeAsync_WithValidFiles_ReturnsSuccessCode(string repoFlag, string labelFlag) {
         // Arrange
         const string repoFilePath = "exist-file-repo.txt";
         const string labelsFilePath = "exist-file-label.txt";
 
-        var args = new[] { "-r", repoFilePath, "-l", labelsFilePath };
+        var args = new[] { repoFlag, repoFilePath, labelFlag, labelsFilePath };
 
         // Act
         var result = await CommandLine.InvokeAsync(args, _settings, _fileSystem);
