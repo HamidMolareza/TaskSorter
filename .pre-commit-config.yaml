@@ -27,6 +27,6 @@ repos:
         args: ['--doc=*.md', '--source=src/*']
       - id: run-scripts
         name: dotnet-coverage
-        args: [ '-f=scripts/dotnet-coverage.sh', '--line=50' ]
+        args: [ '-f=scripts/dotnet-coverage.sh', '--line=50', '-s=src' ]
         stages: [ push ]
         pass_filenames: false
