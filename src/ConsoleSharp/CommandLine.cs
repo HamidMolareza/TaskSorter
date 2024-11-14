@@ -1,24 +1,47 @@
 using System.CommandLine;
+using ConsoleSharpTemplate.Helpers.FileService;
 
 namespace ConsoleSharpTemplate;
 
 public static class CommandLine {
-    public static Task<int> InvokeAsync(string[] args, AppSettings settings) {
-        var delayOption = new Option<int>(
-            ["-d", "--delay"],
-            () => settings.Delay,
-            "An example number input"
+    public static Task<int> InvokeAsync(string[] args, AppSettings settings, IFileService fileService) {
+        var repoOption = new Option<string>(
+            ["-r", "--repo"],
+            () => settings.RepositoryFile,
+            "Repository file"
         );
-        delayOption.AddValidator(result => {
-            if (result.GetValueOrDefault<int>() < 0)
-                result.ErrorMessage = "The delay value can not less than 0";
+        repoOption.AddValidator(result => {
+            var value = result.GetValueOrDefault<string>();
+            if (string.IsNullOrWhiteSpace(value))
+                result.ErrorMessage = "The repository file is required.";
+            else if (!fileService.Exists(value))
+                result.ErrorMessage = "The repository file is not valid.";
         });
 
-        var rootCommand = new RootCommand("My C# Console App with Command-Line Parsing") {
-            delayOption
-        };
+        var labelsOption = new Option<string>(
+            ["-l", "--labels"],
+            () => settings.LabelsFile,
+            "Labels file"
+        );
+        labelsOption.AddValidator(result => {
+            var value = result.GetValueOrDefault<string>();
+            if (string.IsNullOrWhiteSpace(value))
+                result.ErrorMessage = "The labels file is required.";
+            else if (!fileService.Exists(value))
+                result.ErrorMessage = "The labels file is not valid.";
+        });
 
-        rootCommand.SetHandler(delay => { settings.Delay = delay; }, delayOption);
+        var rootCommand =
+            new RootCommand(
+                "Prioritizes GitHub issues and PRs by project and label using a C# CLI for streamlined task management.") {
+                repoOption,
+                labelsOption
+            };
+
+        rootCommand.SetHandler((repo, label) => {
+            settings.RepositoryFile = repo;
+            settings.LabelsFile = label;
+        }, repoOption, labelsOption);
 
         // Invoke the command
         return rootCommand.InvokeAsync(args);

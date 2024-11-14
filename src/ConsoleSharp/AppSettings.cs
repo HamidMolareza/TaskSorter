@@ -1,5 +1,6 @@
 namespace ConsoleSharpTemplate;
 
 public class AppSettings {
-    public int Delay { get; set; }
+    public string RepositoryFile { get; set; }
+    public string LabelsFile { get; set; }
 }
