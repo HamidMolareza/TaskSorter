@@ -9,6 +9,22 @@ namespace TaskSorter;
 public class App(ILogger<App> logger, AppSettings settings, IFileSystem fileSystem) {
     public async Task<Result> RunAsync() {
         return EnsureInputsAreValid();
+    private Result SetGithubTokenIfMissing() {
+        if (!string.IsNullOrWhiteSpace(settings.GithubToken))
+            return Result.Ok();
+
+        settings.GithubTokenEnvName ??= AppSettings.DefaultGithubTokenEnvName;
+
+        var githubEnv = Environment.GetEnvironmentVariable(settings.GithubTokenEnvName);
+        if (string.IsNullOrWhiteSpace(githubEnv)) {
+            return Result.Fail(new ValidationError(
+                message:
+                $"GitHub token is required. You can set it with '{settings.GithubTokenEnvName}' environment or set in `appsettings.json` or give as CLI argument."));
+        }
+
+        logger.LogDebug("The GitHub token set with environment.");
+        settings.GithubToken = githubEnv;
+        return Result.Ok();
     }
 
     private Result EnsureInputsAreValid() {
