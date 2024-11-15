@@ -1,5 +1,7 @@
 # Contributing
 
+> Back to [Home](../README.md)
+
 When contributing to this repository, please first discuss the change you wish to make via **issue**, email, or any
 other
 method with the owners of this repository before making a change. Please note we have
@@ -71,3 +73,5 @@ Please try to create bug reports that are:
 6. **Review and Merge**: Once your pull request is reviewed and approved, it will be merged into the main codebase.
 
 Thank you for helping make TaskSorter better!
+
+> Back to [Home](../README.md)

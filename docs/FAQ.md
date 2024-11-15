@@ -1,3 +1,7 @@
+# FAQ
+
+> Back to [Home](../README.md)
+
 ### 1. **What is TaskSorter?**
 
 TaskSorter is a command-line application that helps users prioritize GitHub issues and pull requests based on repository
@@ -69,3 +73,5 @@ multiple repositories and wants a quick way to prioritize them.
 
 Feel free to reach out via the issues section in the repository if you have any other questions or need further
 assistance.
+
+> Back to [Home](../README.md)
