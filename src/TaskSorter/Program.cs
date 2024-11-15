@@ -40,9 +40,8 @@ try {
     var app = serviceProvider.GetRequiredService<App>();
     await app.RunAsync()
         .OnSuccessTee(() => logger.LogDebug("Operations completed successfully."))
-        .OnFailTee(result => logger.LogError("{detail}",
-            result.Detail?.ToString() ?? "No Data!")
-        );
+        .OnFailTee(result => logger.LogError("{detail}", 
+            result.Detail?.ToStr() ?? "No Data!"));
 }
 catch (Exception ex) {
     logger.LogError(ex, "An error occurred.");
