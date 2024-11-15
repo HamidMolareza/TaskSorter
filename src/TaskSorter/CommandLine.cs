@@ -34,8 +34,14 @@ public static class CommandLine {
 
         var githubTokenOption = new Option<string>(
             ["-t", "--token"],
-            () => settings.LabelsFile,
+            () => settings.GithubToken,
             "GitHub Token"
+        );
+
+        var githubTokenEnvNameOption = new Option<string?>(
+            ["-te", "--token-env"],
+            () => settings.GithubTokenEnvName,
+            "GitHub Token Environment Name"
         );
 
         var rootCommand =
@@ -43,14 +49,16 @@ public static class CommandLine {
                 "Prioritizes GitHub issues and PRs by project and label using a C# CLI for streamlined task management.") {
                 repoOption,
                 labelsOption,
-                githubTokenOption
+                githubTokenOption,
+                githubTokenEnvNameOption
             };
 
-        rootCommand.SetHandler((repo, label, githubToken) => {
+        rootCommand.SetHandler((repo, label, githubToken, tokenEnv) => {
             settings.RepositoryFile = repo;
             settings.LabelsFile = label;
             settings.GithubToken = githubToken;
-        }, repoOption, labelsOption, githubTokenOption);
+            settings.GithubTokenEnvName = tokenEnv;
+        }, repoOption, labelsOption, githubTokenOption, githubTokenEnvNameOption);
 
         // Invoke the command
         return rootCommand.InvokeAsync(args);
