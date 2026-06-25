@@ -61,8 +61,19 @@ on time spent sorting tasks manually.
 
 ### Built With
 
-- C#, dotnet 8
+- C#, .NET 9
 - docker
+
+## Personal Project Workflow
+
+TaskSorter is designed to support a lightweight personal project routine:
+
+- Keep each project backlog in GitHub Issues.
+- Keep project goals in each repository, usually in `docs/GOALS.md`.
+- Keep cross-project priority in the TaskSorter repository priority file.
+- Run `projects-status` first for local repository hygiene, then run TaskSorter for the ranked task queue.
+
+See [Personal Project Workflow](./docs/PERSONAL_PROJECT_WORKFLOW.md) for the full routine.
 
 ## Getting Started
 
@@ -70,6 +81,7 @@ on time spent sorting tasks manually.
 
 - **Docker**: Make sure Docker is installed on your system. You can download it from
   the [official Docker website](https://www.docker.com/get-started) if needed.
+- **GitHub token**: Set `GITHUB_PAT` or pass `--token` so TaskSorter can read issues and pull requests.
 
 ### Installation
 
@@ -86,13 +98,15 @@ should be mapped to Docker volumes so that TaskSorter can access them.
 
 1. **Prepare Your Files**:
     - Create a `repo-priority.txt` file that lists your repositories in priority order (highest priority at the top).
+      Repositories can optionally include a project tier: `core`, `active`, `maintenance`, `paused`, or `archive`.
     - Create a `label-priority.txt` file that lists your labels in priority order (highest priority at the top).
+    - Use `--top` to choose how many tasks should appear in the daily queue. The default is 10.
 
 2. **Run TaskSorter with Docker**:
    Use the following command to run TaskSorter, mapping your priority files to the container:
 
    ```bash
-   docker run --rm -v /path/to/repo-priority.txt:repo-priority.txt -v /path/to/label-priority.txt:label-priority.txt hamidmolareza/task-sorter -r repo-priority.txt -l label-priority.txt
+   docker run --rm -v /path/to/repo-priority.txt:repo-priority.txt -v /path/to/label-priority.txt:label-priority.txt hamidmolareza/task-sorter -r repo-priority.txt -l label-priority.txt --top 10
    ```
 
    Replace `/path/to/repo-priority.txt` and `/path/to/label-priority.txt` with the actual paths to your priority files.
@@ -105,7 +119,7 @@ should be mapped to Docker volumes so that TaskSorter can access them.
 docker run --rm \
   -v $(pwd)/repo-priority.txt:repo-priority.txt \
   -v $(pwd)/label-priority.txt:label-priority.txt \
-  hamidmolareza/task-sorter -r repo-priority.txt -l label-priority.txt
+  hamidmolareza/task-sorter -r repo-priority.txt -l label-priority.txt --top 10
 ```
 
 This command will run TaskSorter using your specified priority files, displaying sorted tasks based on calculated
@@ -121,7 +135,7 @@ The higher the line, the more priority (and higher score) the repository receive
 
 ```
 owner/repo1
-owner/repo2
+owner/repo2 maintenance
 ```
 
 ### Label Priority File (`label-priority.txt`)
@@ -129,18 +143,26 @@ owner/repo2
 List labels by priority, with the highest priority on top:
 
 ```
-priority-critical
-priority-high
-priority-medium
-document
+priority/critical
+status/in-progress
+status/next
+priority/high
+type/bug
+priority/medium
+size/s
+size/m
+type/feature
+type/docs
+priority/low
+size/l
 ```
 
 ## How It Works
 
 1. **Load Priorities**: TaskSorter reads the `repo-priority.txt` and `label-priority.txt` files to determine scoring.
 2. **Fetch GitHub Issues and PRs**: Using GitHub API, it retrieves open issues and PRs from the repositories.
-3. **Score Calculation**: For each task, it assigns scores based on the repository and label priorities.
-4. **Sorting and Output**: Tasks are sorted by calculated score, with higher scores indicating higher priority.
+3. **Score Calculation**: For each task, it assigns scores based on repository priority, optional project tier, task labels, status, size, assignment, and lock state.
+4. **Sorting and Output**: Tasks are sorted by calculated score, with higher scores indicating higher priority. The saved report is limited to the configured top queue.
 
 ## CHANGELOG
 
@@ -149,8 +171,11 @@ Please see the [CHANGELOG.md](./CHANGELOG.MD) file.
 ## Features
 
 - **Repository and Label Priority Sorting**: Assign priorities to repositories and labels to rank tasks effectively.
-- **Custom Scoring System**: Each task is given a score based on repository and label priorities, making it easy to sort
-  tasks.
+- **Project Tiers**: Mark repositories as `core`, `active`, `maintenance`, `paused`, or `archive`.
+- **Daily Top Queue**: Limit output with `--top` so the report stays useful for short work sessions.
+- **Read-Only GitHub Access**: Fetches issues and pull requests without modifying GitHub.
+- **Custom Scoring System**: Each task is scored from repository priority, project tier, labels, status, size,
+  assignment, and lock state.
 - **GitHub Issues and PRs**: Retrieves issues and PRs from specified repositories.
 
 ## Support
@@ -191,4 +216,3 @@ _For more information and to report security issues, please refer to our [securi
 This project is licensed under the **GPLv3**.
 
 See [LICENSE](LICENSE) for more information.
-

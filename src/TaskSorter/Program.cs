@@ -2,9 +2,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
-using OnRail.Extensions.OnFail;
-using OnRail.Extensions.OnSuccess;
+using OnRails.Extensions.OnFail;
+using OnRails.Extensions.OnSuccess;
 using TaskSorter;
+using TaskSorter.Helpers;
+using TaskSorter.Settings;
+using TaskSorter.Tasks;
 
 var services = new ServiceCollection();
 
@@ -25,10 +28,16 @@ var appSettings = configuration.GetSection("App")
 services.AddSingleton(appSettings);
 
 // Parse inputs and update the appSettings
-await CommandLine.InvokeAsync(args, appSettings, new FileSystem());
+var commandExitCode = await CommandLine.InvokeAsync(args, appSettings, new FileSystem());
+if (commandExitCode != 0 || !CommandLine.ShouldRunApplication(args)) {
+    Environment.ExitCode = commandExitCode;
+    return;
+}
 
 // Add application services
 services.AddTransient<App>();
+services.AddTransient<TasksService>();
+services.AddSingleton<IFileSystem, FileSystem>();
 
 // -----------------------------------------------------------------
 await using var serviceProvider = services.BuildServiceProvider();
@@ -40,8 +49,8 @@ try {
     var app = serviceProvider.GetRequiredService<App>();
     await app.RunAsync()
         .OnSuccessTee(() => logger.LogDebug("Operations completed successfully."))
-        .OnFailTee(result => logger.LogError("{detail}", 
-            result.Detail?.ToStr() ?? "No Data!"));
+        .OnFailTee(result => logger.LogError("{detail}",
+            result.Detail?.ToString() ?? "No Data!"));
 }
 catch (Exception ex) {
     logger.LogError(ex, "An error occurred.");

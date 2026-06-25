@@ -4,74 +4,75 @@
 
 ### 1. **What is TaskSorter?**
 
-TaskSorter is a command-line application that helps users prioritize GitHub issues and pull requests based on repository
-and label priorities. It’s designed for developers and project managers who need a clear, organized view of their most
-critical tasks.
+TaskSorter is a read-only CLI that fetches GitHub issues and pull requests across configured repositories and generates a ranked task queue.
 
-### 2. **How does TaskSorter calculate priority?**
+### 2. **Who is TaskSorter for?**
 
-TaskSorter assigns priority scores based on the order of repositories and labels provided in two
-files: `repo-priority.txt` and `label-priority.txt`. Tasks are given higher scores if they belong to higher-priority
-repositories or have higher-priority labels, enabling sorting by overall importance.
+TaskSorter is for developers who maintain several repositories and need a quick daily view of the most important issues to work on.
 
-### 3. **Can TaskSorter be used with private repositories?**
+### 3. **Does TaskSorter modify GitHub issues?**
 
-Yes, TaskSorter can access private repositories as long as you provide a GitHub token with appropriate permissions.
-Ensure your token has at least read access for issues and pull requests in private repositories.
+No. TaskSorter only reads issues and pull requests, then writes local report files. It does not create issues, edit labels, change assignees, or close tasks.
 
-### 4. **How should I format the repository and label priority files?**
+### 4. **How does TaskSorter calculate priority?**
 
-The repository and label files should each list items in descending order of priority (most important at the top).
-Here’s an example:
+TaskSorter scores each task from repository order, optional project tier, matching label priorities, status labels, size labels, assignment, and lock state. Higher scores appear earlier in the report.
 
-**Repository Priority File (`repo-priority.txt`):**
+### 5. **How should I format the repository priority file?**
 
-   ```
-   owner/repo1
-   owner/repo2
-   ```
+List repositories in descending priority order. Add an optional tier after the repository name.
 
-**Label Priority File (`label-priority.txt`):**
+```text
+owner/core-repo core
+owner/active-repo active
+owner/maintenance-repo maintenance
+```
 
-   ```
-   priority-critical
-   priority-high
-   priority-medium
-   ```
+Valid tiers are `core`, `active`, `maintenance`, `paused`, and `archive`. Repositories without a tier default to `active`.
 
-### 5. **Is TaskSorter cross-platform?**
+### 6. **How should I format the label priority file?**
 
-Yes, with Docker, you can run the program on any operating system. Additionally, this program is written in C#, which is
-compatible with all operating systems.
+List labels in descending priority order.
 
-### 6. **How do I install TaskSorter?**
+```text
+priority/critical
+status/in-progress
+status/next
+priority/high
+type/bug
+priority/medium
+size/s
+size/m
+type/feature
+type/docs
+priority/low
+size/l
+```
 
-You can install TaskSorter by cloning the repository and building it with .NET. For detailed instructions, refer to
-the [Installation](#installation) section.
+TaskSorter also recognizes older labels such as `priority-high`, `scope-bug`, and `status-in-progress`.
 
-### 7. **Can I customize the scoring system?**
+### 7. **What label set should I use across personal projects?**
 
-The scoring system is based on the order of priorities specified in the provided files. While direct customization of
-scoring rules isn't available, adjusting the order of items in `repo-priority.txt` and `label-priority.txt` will affect
-task prioritization.
+Use a small shared set: `priority/*`, `type/*`, `status/*`, and `size/*`. The recommended labels are documented in [Personal Project Workflow](./PERSONAL_PROJECT_WORKFLOW.md).
 
-### 8. **Does TaskSorter support automated scheduling to re-sort tasks?**
+### 8. **How many tasks should the report show?**
 
-TaskSorter does not currently support automated scheduling. However, you can run it manually whenever you want to get an
-updated view of task priorities. To automate this process, consider setting up a cron job (Linux/macOS) or Task
-Scheduler (Windows) to periodically run TaskSorter.
+Use `--top` to keep the report focused. The default is 10, and `--top 5` is usually enough for a short daily planning session.
 
-### 9. **How can I contribute to TaskSorter?**
+### 9. **How does this work with `projects-status`?**
 
-Contributions are welcome! If you have ideas or would like to add new features, please check out
-the [CONTRIBUTING.md](CONTRIBUTING.md) file in the repository to get started.
+Run `projects-status` first to find local repository hygiene work such as commits, pushes, missing remotes, or upstream setup. Then run TaskSorter to choose product/task work from GitHub Issues.
 
-### 10. **Who is TaskSorter for?**
+### 10. **Can TaskSorter be used with private repositories?**
 
-TaskSorter is ideal for developers, project managers, and anyone who manages a large number of GitHub tasks across
-multiple repositories and wants a quick way to prioritize them.
+Yes. Provide a GitHub token with read access to the private repositories you configure.
 
-Feel free to reach out via the issues section in the repository if you have any other questions or need further
-assistance.
+### 11. **Can I customize the scoring system?**
+
+You can customize the order of repositories and labels through the input files. The built-in scoring weights for tiers, status, size, assignment, and lock state are currently fixed in code.
+
+### 12. **Does TaskSorter support automated scheduling?**
+
+TaskSorter does not include a scheduler. You can run it manually or call it from cron, systemd timers, or another local automation script.
 
 > Back to [Home](../README.md)

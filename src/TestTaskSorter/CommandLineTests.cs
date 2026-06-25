@@ -1,5 +1,6 @@
 using System.IO.Abstractions.TestingHelpers;
 using TaskSorter;
+using TaskSorter.Settings;
 
 namespace TestTaskSorter;
 
@@ -86,5 +87,38 @@ public class CommandLineTests {
 
         // Assert
         Assert.NotEqual(0, result); // Assuming success returns 0
+    }
+
+    [Fact]
+    public async Task InvokeAsync_WithTopOption_UpdatesTaskLimit() {
+        var args = new[] { "-r", "exist-file-repo.txt", "-l", "exist-file-label.txt", "--top", "5" };
+
+        var result = await CommandLine.InvokeAsync(args, _settings, _fileSystem);
+
+        Assert.Equal(0, result);
+        Assert.Equal(5, _settings.TaskLimit);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    public async Task InvokeAsync_WithInvalidTopOption_ReturnsError(string taskLimit) {
+        var args = new[] { "-r", "exist-file-repo.txt", "-l", "exist-file-label.txt", "--top", taskLimit };
+
+        var result = await CommandLine.InvokeAsync(args, _settings, _fileSystem);
+
+        Assert.NotEqual(0, result);
+    }
+
+    [Theory]
+    [InlineData("--help", false)]
+    [InlineData("-h", false)]
+    [InlineData("-?", false)]
+    [InlineData("--version", false)]
+    [InlineData("--top", true)]
+    public void ShouldRunApplication_GiveArguments_ReturnsExpectedValue(string argument, bool expected) {
+        var actual = CommandLine.ShouldRunApplication([argument]);
+
+        Assert.Equal(expected, actual);
     }
 }
