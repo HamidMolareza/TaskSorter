@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="TaskSorter.Backend/TaskSorter.Backend.csproj" />
+  <Project Path="TaskSorter.Core/TaskSorter.Core.csproj" />
+  <Project Path="TaskSorter.Tests/TaskSorter.Tests.csproj" />
+</Solution>

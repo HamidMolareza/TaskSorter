@@ -1,12 +1,12 @@
 # Personal Project Workflow
 
-TaskSorter is intended to be the read-only queue generator for personal projects tracked with GitHub Issues.
+TaskSorter is intended to be the read-only queue dashboard for personal projects tracked with GitHub Issues.
 
 ## Source Of Truth
 
 - Each project owns its tasks in GitHub Issues.
 - Each project should keep a short `docs/GOALS.md` with purpose, current phase, and the top 1-3 outcomes.
-- TaskSorter keeps cross-project priority outside GitHub issues through the repository priority file.
+- TaskSorter profiles store cross-project priority, label priority, task limit, and delay settings.
 - `projects-status` is only a local repository hygiene signal. It should not decide product priority.
 
 ## Labels
@@ -32,11 +32,11 @@ size/m
 size/l
 ```
 
-TaskSorter also recognizes the older TaskSorter labels such as `priority-high`, `scope-bug`, and `status-in-progress`.
+TaskSorter also recognizes older TaskSorter labels such as `priority-high`, `scope-bug`, and `status-in-progress`.
 
 ## Project Tiers
 
-The repository priority file supports optional project tiers:
+Repository profile text supports optional project tiers:
 
 ```text
 HamidMolareza/TaskSorter core
@@ -48,24 +48,18 @@ HamidMolareza/ArchivedIdea archive
 
 Repositories without a tier default to `active`.
 
-## Routine
-
 ## Daily Routine
 
 1. Run `projects-status`.
 2. If the selected repository has uncommitted or unpushed work, handle that before starting a new issue.
-3. Run TaskSorter:
-
-```bash
-dotnet run --project src/TaskSorter/TaskSorter.csproj -- --top 10
-```
-
-4. Pick one task from the top queue based on available time and energy.
-5. Keep work in progress narrow: one active issue per project and one to three active issues total.
+3. Open TaskSorter at `http://localhost:5173`.
+4. Select the relevant profile and run it.
+5. Pick one task from the ranked queue based on available time and energy.
+6. Keep work in progress narrow: one active issue per project and one to three active issues total.
 
 ## Weekly Routine
 
-- Review active repositories and adjust tiers.
+- Review active repositories and adjust profile tiers.
 - Close, downgrade, or pause stale low-value issues.
 - Keep each active project to one to three `status/next` issues.
 - Move projects that are not realistic this month to `paused` or `archive`.

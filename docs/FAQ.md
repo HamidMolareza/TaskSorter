@@ -2,25 +2,33 @@
 
 > Back to [Home](../README.md)
 
-### 1. **What is TaskSorter?**
+### 1. What is TaskSorter?
 
-TaskSorter is a read-only CLI that fetches GitHub issues and pull requests across configured repositories and generates a ranked task queue.
+TaskSorter is a web app that ranks open GitHub issues and pull requests across configured repositories.
 
-### 2. **Who is TaskSorter for?**
+### 2. Does TaskSorter modify GitHub issues?
 
-TaskSorter is for developers who maintain several repositories and need a quick daily view of the most important issues to work on.
+No. TaskSorter only reads GitHub issues and pull requests. It does not create issues, edit labels, assign users, close tasks, or write back to GitHub.
 
-### 3. **Does TaskSorter modify GitHub issues?**
+### 3. Where is configuration stored?
 
-No. TaskSorter only reads issues and pull requests, then writes local report files. It does not create issues, edit labels, change assignees, or close tasks.
+Configuration is stored in PostgreSQL as named profiles. A profile contains repository lines, label lines, task limit, request delay, and an encrypted GitHub token.
 
-### 4. **How does TaskSorter calculate priority?**
+### 4. How are GitHub tokens stored?
 
-TaskSorter scores each task from repository order, optional project tier, matching label priorities, status labels, size labels, assignment, and lock state. Higher scores appear earlier in the report.
+Tokens are encrypted by the backend with ASP.NET Core Data Protection before they are saved. The frontend can submit or replace a token, but API reads only return `hasGitHubToken`.
 
-### 5. **How should I format the repository priority file?**
+### 5. What happens if the Data Protection key volume is deleted?
 
-List repositories in descending priority order. Add an optional tier after the repository name.
+Previously encrypted tokens may become unreadable. Keep the `data-protection-keys` Docker volume if you want saved profile tokens to keep working.
+
+### 6. How does TaskSorter calculate priority?
+
+TaskSorter scores each task from repository order, optional project tier, matching label priorities, status labels, size labels, assignment, and lock state. Higher scores appear earlier in the queue.
+
+### 7. How should I format repositories?
+
+Use one repository per line, optionally followed by a tier.
 
 ```text
 owner/core-repo core
@@ -28,11 +36,11 @@ owner/active-repo active
 owner/maintenance-repo maintenance
 ```
 
-Valid tiers are `core`, `active`, `maintenance`, `paused`, and `archive`. Repositories without a tier default to `active`.
+Valid tiers are `core`, `active`, `maintenance`, `paused`, and `archive`.
 
-### 6. **How should I format the label priority file?**
+### 8. How should I format labels?
 
-List labels in descending priority order.
+Use one label per line in descending priority.
 
 ```text
 priority/critical
@@ -51,28 +59,26 @@ size/l
 
 TaskSorter also recognizes older labels such as `priority-high`, `scope-bug`, and `status-in-progress`.
 
-### 7. **What label set should I use across personal projects?**
+### 9. What does config preview do?
 
-Use a small shared set: `priority/*`, `type/*`, `status/*`, and `size/*`. The recommended labels are documented in [Personal Project Workflow](./PERSONAL_PROJECT_WORKFLOW.md).
+Config preview parses repository and label text without calling GitHub. It shows normalized repositories, label values, warnings, and validation errors before you save or run a profile.
 
-### 8. **How many tasks should the report show?**
+### 10. Why does GitHub rate limiting matter?
 
-Use `--top` to keep the report focused. The default is 10, and `--top 5` is usually enough for a short daily planning session.
+Each run fetches current-user issues and repository issues. Large profiles can consume more GitHub API quota, so use the delay setting and keep profiles focused.
 
-### 9. **How does this work with `projects-status`?**
+### 11. Can I use private repositories?
 
-Run `projects-status` first to find local repository hygiene work such as commits, pushes, missing remotes, or upstream setup. Then run TaskSorter to choose product/task work from GitHub Issues.
+Yes, if the saved GitHub token has read access to those repositories.
 
-### 10. **Can TaskSorter be used with private repositories?**
+### 12. How do I run everything locally?
 
-Yes. Provide a GitHub token with read access to the private repositories you configure.
+Use Docker Compose:
 
-### 11. **Can I customize the scoring system?**
+```bash
+docker compose up --build
+```
 
-You can customize the order of repositories and labels through the input files. The built-in scoring weights for tiers, status, size, assignment, and lock state are currently fixed in code.
-
-### 12. **Does TaskSorter support automated scheduling?**
-
-TaskSorter does not include a scheduler. You can run it manually or call it from cron, systemd timers, or another local automation script.
+Then open `http://localhost:5173`.
 
 > Back to [Home](../README.md)

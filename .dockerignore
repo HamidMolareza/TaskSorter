@@ -1,0 +1,13 @@
+.git
+.idea
+.vscode
+.tasksorter-keys
+**/bin
+**/obj
+**/node_modules
+**/dist
+**/TestResults
+**/*.user
+**/*.db
+outputs
+src/outputs

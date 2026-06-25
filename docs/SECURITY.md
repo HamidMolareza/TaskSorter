@@ -1,5 +1,11 @@
 # Security Policy
 
+## Token Storage
+
+TaskSorter stores GitHub tokens only in the backend database and encrypts them with ASP.NET Core Data Protection.
+The decrypted token is never returned by API responses. Keep the PostgreSQL volume and Data Protection key volume
+private; access to both can allow token recovery.
+
 ## Reporting a Vulnerability
 
 If there are any vulnerabilities in this project, don't hesitate to _report them_.

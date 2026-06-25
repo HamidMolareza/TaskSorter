@@ -1,0 +1,17 @@
+priority/critical
+status/in-progress
+status/next
+priority/high
+type/security
+type/bug
+priority/medium
+size/s
+size/m
+type/feature
+type/performance
+type/docs
+type/chore
+priority/low
+size/l
+status/waiting
+status/blocked
