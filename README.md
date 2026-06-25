@@ -1,148 +1,69 @@
-<h1 align="center">
-  <a href="">
-    <img src="./docs/images/logo.png" alt="Logo" width="100" height="100">
-  </a>
-</h1>
+# TaskSorter
 
-<div align="center">
-  <h1>TaskSorter</h1>
-  <br />
-  <a href="#getting-started"><strong>Getting Started »</strong></a>
-  <br />
-  <br />
-  <a href="https://github.com/HamidMolareza/TaskSorter/issues/new?assignees=&labels=bug&template=BUG_REPORT.md&title=bug%3A+">Report a Bug</a>
-  ·
-  <a href="https://github.com/HamidMolareza/TaskSorter/issues/new?assignees=&labels=enhancement&template=FEATURE_REQUEST.md&title=feat%3A+">Request a Feature</a>
-  .
-  <a href="https://github.com/HamidMolareza/TaskSorter/issues/new?assignees=&labels=question&template=SUPPORT_QUESTION.md&title=support%3A+">Ask a Question</a>
-</div>
+TaskSorter is a web dashboard for ranking GitHub issues and pull requests across multiple repositories. It keeps GitHub as the read-only task source, stores reusable ranking profiles in PostgreSQL, and helps choose a focused queue for daily project work.
 
-<div align="center">
-<br />
+## Built With
 
+- Backend: ASP.NET Core Web API, .NET 10, EF Core, PostgreSQL
+- Frontend: React 19, TypeScript, Vite
+- Deployment: Docker Compose with separate backend, frontend, and PostgreSQL services
 
+## Architecture
 
-![Docker Pulls](https://img.shields.io/docker/pulls/hamidmolareza/task-sorter)
-![Docker Image Size (latest semver)](https://badgen.net/docker/size/hamidmolareza/task-sorter?icon=docker&label=image%20size)
-![Docker Image Version](https://img.shields.io/docker/v/hamidmolareza/task-sorter?sort=semver)
-
-![GitHub](https://img.shields.io/github/license/HamidMolareza/TaskSorter)
-[![Pull Requests welcome](https://img.shields.io/badge/PRs-welcome-ff69b4.svg?style=flat-square)](https://github.com/HamidMolareza/TaskSorter/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
-[![code with love by HamidMolareza](https://img.shields.io/badge/%3C%2F%3E%20with%20%E2%99%A5%20by-HamidMolareza-ff1414.svg?style=flat-square)](https://github.com/HamidMolareza)
-
-</div>
-
-## About
-
-**TaskSorter** is a command-line application crafted to bring structure and clarity to GitHub task management, tailored
-for developers and project managers who rely heavily on GitHub issues and pull requests to track progress and
-priorities.
-
-### Problem It Solves
-
-In collaborative development projects, managing priorities across multiple repositories can be challenging. Often,
-issues and pull requests are scattered, with varying degrees of importance that depend on repository significance and
-label assignments. TaskSorter simplifies this by assigning a clear, customizable priority score to each task, enabling
-you to focus on what truly matters.
-
-### Purpose and Goals
-
-The purpose of TaskSorter is to streamline the process of prioritizing GitHub tasks based on pre-set repository and
-label priorities. By using a scoring mechanism, it ensures that tasks align with the project’s most pressing needs,
-saving time and improving productivity. With a straightforward CLI interface, TaskSorter aims to be an accessible,
-lightweight tool for improving task management practices.
-
-### Why It Matters
-
-Effective task prioritization is crucial for productivity and project success. TaskSorter allows users to tackle their
-highest-priority tasks first, ensuring the most impactful work is addressed without unnecessary guesswork. This is
-especially valuable in multi-repo environments or in cases where urgent tasks require immediate attention, cutting down
-on time spent sorting tasks manually.
-
-### Built With
-
-- C#, .NET 9
-- docker
-
-## Personal Project Workflow
-
-TaskSorter is designed to support a lightweight personal project routine:
-
-- Keep each project backlog in GitHub Issues.
-- Keep project goals in each repository, usually in `docs/GOALS.md`.
-- Keep cross-project priority in the TaskSorter repository priority file.
-- Run `projects-status` first for local repository hygiene, then run TaskSorter for the ranked task queue.
-
-See [Personal Project Workflow](./docs/PERSONAL_PROJECT_WORKFLOW.md) for the full routine.
+- `src/TaskSorter.Core`: repository/label parsing, project tiers, scoring, sorting, and GitHub task fetching.
+- `src/TaskSorter.Backend`: Minimal API, PostgreSQL persistence, encrypted GitHub token storage, migrations, and profile endpoints.
+- `src/TaskSorter.Frontend`: React dashboard for profile management, config preview, filtering, and ranked task display.
+- `src/TaskSorter.Tests`: core and backend API tests.
 
 ## Getting Started
 
 ### Prerequisites
 
-- **Docker**: Make sure Docker is installed on your system. You can download it from
-  the [official Docker website](https://www.docker.com/get-started) if needed.
-- **GitHub token**: Set `GITHUB_PAT` or pass `--token` so TaskSorter can read issues and pull requests.
+- Docker with Compose V2
+- A GitHub token with read access to the repositories you want to rank
+- Optional for local development: .NET 10 SDK and Node.js 24+
 
-### Installation
-
-To get started with TaskSorter, pull the Docker image from the repository:
+### Run With Docker Compose
 
 ```bash
-docker pull hamidmolareza/task-sorter:latest
+docker compose up --build
 ```
 
-### Usage
+Open the frontend at:
 
-To run TaskSorter, you’ll need to provide it with two files specifying repository and label priorities. These files
-should be mapped to Docker volumes so that TaskSorter can access them.
-
-1. **Prepare Your Files**:
-    - Create a `repo-priority.txt` file that lists your repositories in priority order (highest priority at the top).
-      Repositories can optionally include a project tier: `core`, `active`, `maintenance`, `paused`, or `archive`.
-    - Create a `label-priority.txt` file that lists your labels in priority order (highest priority at the top).
-    - Use `--top` to choose how many tasks should appear in the daily queue. The default is 10.
-
-2. **Run TaskSorter with Docker**:
-   Use the following command to run TaskSorter, mapping your priority files to the container:
-
-   ```bash
-   docker run --rm -v /path/to/repo-priority.txt:repo-priority.txt -v /path/to/label-priority.txt:label-priority.txt hamidmolareza/task-sorter -r repo-priority.txt -l label-priority.txt --top 10
-   ```
-
-   Replace `/path/to/repo-priority.txt` and `/path/to/label-priority.txt` with the actual paths to your priority files.
-
-> For file names, you can use any name you want.
-
-### Example
-
-```bash
-docker run --rm \
-  -v $(pwd)/repo-priority.txt:repo-priority.txt \
-  -v $(pwd)/label-priority.txt:label-priority.txt \
-  hamidmolareza/task-sorter -r repo-priority.txt -l label-priority.txt --top 10
+```text
+http://localhost:5173
 ```
 
-This command will run TaskSorter using your specified priority files, displaying sorted tasks based on calculated
-scores.
+The backend is exposed at:
 
-Now you’re all set to efficiently manage and prioritize your GitHub tasks with TaskSorter!
-
-## Example Files
-
-### Repository Priority File (`repo-priority.txt`)
-
-The higher the line, the more priority (and higher score) the repository receives:
-
-```
-owner/repo1
-owner/repo2 maintenance
+```text
+http://localhost:5111
 ```
 
-### Label Priority File (`label-priority.txt`)
+PostgreSQL data and ASP.NET Core Data Protection keys are persisted in Docker volumes. The first backend startup applies migrations and creates a `Default` profile from the seed files in `src/TaskSorter.Backend/SeedData`.
 
-List labels by priority, with the highest priority on top:
+## Usage
 
+1. Select or create a profile.
+2. Paste repository priority lines and label priority lines.
+3. Set `Top` and request delay values.
+4. Save a GitHub token for the profile.
+5. Run the profile and review the ranked queue.
+
+Repository lines use this format:
+
+```text
+owner/repo core
+owner/active-project active
+owner/maintenance-project maintenance
 ```
+
+Valid tiers are `core`, `active`, `maintenance`, `paused`, and `archive`. Repositories without a tier default to `active`.
+
+Label lines use descending priority:
+
+```text
 priority/critical
 status/in-progress
 status/next
@@ -157,62 +78,46 @@ priority/low
 size/l
 ```
 
-## How It Works
+TaskSorter also recognizes older labels such as `priority-high`, `scope-bug`, and `status-in-progress`.
 
-1. **Load Priorities**: TaskSorter reads the `repo-priority.txt` and `label-priority.txt` files to determine scoring.
-2. **Fetch GitHub Issues and PRs**: Using GitHub API, it retrieves open issues and PRs from the repositories.
-3. **Score Calculation**: For each task, it assigns scores based on repository priority, optional project tier, task labels, status, size, assignment, and lock state.
-4. **Sorting and Output**: Tasks are sorted by calculated score, with higher scores indicating higher priority. The saved report is limited to the configured top queue.
+## How Ranking Works
 
-## CHANGELOG
+TaskSorter fetches open issues and pull requests without modifying GitHub. Each task is scored from repository priority, project tier, configured labels, status labels, size labels, assignment, and lock state. The dashboard shows the final score and score breakdown for each ranked task.
 
-Please see the [CHANGELOG.md](./CHANGELOG.MD) file.
+## Local Development
 
-## Features
+Backend:
 
-- **Repository and Label Priority Sorting**: Assign priorities to repositories and labels to rank tasks effectively.
-- **Project Tiers**: Mark repositories as `core`, `active`, `maintenance`, `paused`, or `archive`.
-- **Daily Top Queue**: Limit output with `--top` so the report stays useful for short work sessions.
-- **Read-Only GitHub Access**: Fetches issues and pull requests without modifying GitHub.
-- **Custom Scoring System**: Each task is scored from repository priority, project tier, labels, status, size,
-  assignment, and lock state.
-- **GitHub Issues and PRs**: Retrieves issues and PRs from specified repositories.
+```bash
+dotnet run --project src/TaskSorter.Backend/TaskSorter.Backend.csproj
+```
 
-## Support
+Frontend:
 
-Reach out to the maintainer at one of the following places:
+```bash
+npm install --prefix src/TaskSorter.Frontend
+npm run dev --prefix src/TaskSorter.Frontend
+```
 
-- [GitHub issues](https://github.com/HamidMolareza/TaskSorter/issues/new?assignees=&labels=question&template=SUPPORT_QUESTION.md&title=support%3A+)
-- Contact options listed on [this GitHub profile](https://github.com/HamidMolareza)
+Tests:
 
-## FAQ
+```bash
+dotnet test src/TaskSorter.slnx -p:NuGetAudit=false
+npm run test --prefix src/TaskSorter.Frontend
+npm run build --prefix src/TaskSorter.Frontend
+```
 
-Please see the [FAQ](./docs/FAQ.md) file.
+## Documentation
 
-## Contributing
-
-First off, thanks for taking the time to contribute! Contributions are what make the free/open-source community such an
-amazing place to learn, inspire, and create. Any contributions you make will benefit everybody else and are **greatly
-appreciated**.
-
-Please read [our contribution guidelines](docs/CONTRIBUTING.md), and thank you for being involved!
-
-## Authors & contributors
-
-The original setup of this repository is by [HamidMolareza](https://github.com/HamidMolareza).
-
-For a full list of all authors and contributors,
-see [the contributors page](https://github.com/HamidMolareza/TaskSorter/contributors).
+- [API reference](docs/API.md)
+- [FAQ](docs/FAQ.md)
+- [Personal Project Workflow](docs/PERSONAL_PROJECT_WORKFLOW.md)
+- [Goals](docs/GOALS.md)
 
 ## Security
 
-PROJECT_NAME follows good practices of security, but 100% security cannot be assured. PROJECT_NAME is provided **"as
-is"** without any **warranty**.
-
-_For more information and to report security issues, please refer to our [security documentation](docs/SECURITY.md)._
+GitHub tokens are accepted by the backend and encrypted with ASP.NET Core Data Protection before being stored in PostgreSQL. Decrypted tokens are never returned by API responses. Keep the Data Protection key volume private, because encrypted tokens depend on those keys.
 
 ## License
 
-This project is licensed under the **GPLv3**.
-
-See [LICENSE](LICENSE) for more information.
+This project is licensed under GPLv3. See [LICENSE](LICENSE).

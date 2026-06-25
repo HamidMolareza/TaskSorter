@@ -1,0 +1,11 @@
+@TaskSorter.Backend_HostAddress = http://localhost:5111
+
+GET {{TaskSorter.Backend_HostAddress}}/health
+Accept: application/json
+
+###
+
+GET {{TaskSorter.Backend_HostAddress}}/api/profiles
+Accept: application/json
+
+###
