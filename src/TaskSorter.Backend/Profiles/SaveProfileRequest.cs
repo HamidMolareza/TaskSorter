@@ -8,11 +8,13 @@ public sealed record SaveProfileRequest(
     string LabelLines,
     int TaskLimit,
     int DelayInMilliseconds,
-    string? GitHubToken)
+    string? GitHubToken = null,
+    TaskPriorityFactors? PriorityFactors = null)
 {
     public ProfileConfiguration ToConfiguration() => new(
         RepositoryLines,
         LabelLines,
         TaskLimit,
-        DelayInMilliseconds);
+        DelayInMilliseconds,
+        PriorityFactors);
 }

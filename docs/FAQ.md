@@ -12,7 +12,7 @@ No. TaskSorter only reads GitHub issues and pull requests. It does not create is
 
 ### 3. Where is configuration stored?
 
-Configuration is stored in PostgreSQL as named profiles. A profile contains repository lines, label lines, task limit, request delay, and an encrypted GitHub token.
+Configuration is stored in PostgreSQL as named profiles. A profile contains repository lines, label lines, task limit, request delay, priority factors, and an encrypted GitHub token.
 
 ### 4. How are GitHub tokens stored?
 
@@ -24,7 +24,7 @@ Previously encrypted tokens may become unreadable. Keep the `data-protection-key
 
 ### 6. How does TaskSorter calculate priority?
 
-TaskSorter scores each task from repository order, optional project tier, matching label priorities, status labels, size labels, assignment, and lock state. Higher scores appear earlier in the queue.
+TaskSorter scores each task from repository order, optional project tier, matching label priorities, status labels, size labels, assignment, and lock state. Higher scores appear earlier in the queue. The editable priority factors are repository tier scores (`core`, `active`, `maintenance`, `paused`, `archive`), status scores (`in-progress`, `next`, `waiting`, `blocked`, default), size scores (`s`, `m`, `l`, default), assignment bonus, and lock penalty.
 
 ### 7. How should I format repositories?
 
@@ -65,13 +65,21 @@ Config preview parses repository and label text without calling GitHub. It shows
 
 ### 10. Why does GitHub rate limiting matter?
 
-Each run fetches current-user issues and repository issues. Large profiles can consume more GitHub API quota, so use the delay setting and keep profiles focused.
+Each uncached run fetches current-user issues and repository issues. Large profiles can consume more GitHub API quota, so use the delay setting, keep profiles focused, and rely on the default GitHub cache for repeated runs. TaskSorter stores a small quota snapshot per token fingerprint and blocks fresh GitHub reads when the snapshot is at or below `GitHub:QuotaReserveRequests` unless you explicitly confirm a quota override.
 
-### 11. Can I use private repositories?
+### 11. How does GitHub caching work?
+
+TaskSorter caches successful GitHub reads in the backend for 5 minutes by default. The backend keeps a hot in-memory copy and stores cache entries in PostgreSQL until their TTL expires, so Docker backend restarts can reuse recent cached data. It caches normalized GitHub task data, not the final ranked result count. If you change `Top`, label order, repository priority, or priority factors, TaskSorter re-ranks the cached items with the current settings. Use the refresh action or Cache tab `Clear cache and refresh` button when you need fresh data from GitHub immediately. The Cache tab shows the last run status, hit count, GitHub request count, TTL, per-operation source, quota status, remaining quota, reserve, reset time, and quota source.
+
+### 12. Why can a run time out?
+
+The run button waits for GitHub reads across the whole profile. Large profiles, slow GitHub responses, or high delay settings can exceed the configured timeout. TaskSorter returns a JSON timeout error and logs the correlation id so you can search backend logs.
+
+### 13. Can I use private repositories?
 
 Yes, if the saved GitHub token has read access to those repositories.
 
-### 12. How do I run everything locally?
+### 14. How do I run everything locally?
 
 Use Docker Compose:
 

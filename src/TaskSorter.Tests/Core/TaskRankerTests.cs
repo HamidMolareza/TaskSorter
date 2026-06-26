@@ -1,3 +1,4 @@
+using TaskSorter.Core.Configuration;
 using TaskSorter.Core.Models;
 using TaskSorter.Core.Tasks;
 
@@ -55,6 +56,35 @@ public sealed class TaskRankerTests
             10);
 
         Assert.Same(assigned, result[0]);
+    }
+
+    [Fact]
+    public void Rank_GivenCustomPriorityFactors_UsesConfiguredAssignmentBonus()
+    {
+        var task = CreateTask(
+            new Repository("owner", "repo"),
+            [
+                new Label("priority/high"),
+                new Label("status/next"),
+                new Label("size/s")
+            ],
+            assigned: true);
+
+        var ranker = new TaskRanker();
+        var result = ranker.Rank(
+            [task],
+            [new Repository("owner", "repo", 2, ProjectTier.Parse("core"))],
+            [
+                new Label("priority/high", 4),
+                new Label("status/next", 3),
+                new Label("size/s", 2)
+            ],
+            10,
+            new TaskPriorityFactors { AssignmentBonus = 99 });
+
+        var rankedTask = Assert.Single(result);
+        Assert.Equal(690, rankedTask.Value);
+        Assert.Equal(99, rankedTask.AssignmentScore);
     }
 
     private static TaskData CreateTask(Repository repository, List<Label> labels, bool assigned = false) =>

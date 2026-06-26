@@ -1,3 +1,4 @@
+using TaskSorter.Core.Configuration;
 using TaskSorter.Core.Models;
 
 namespace TaskSorter.Core.Tasks;
@@ -8,11 +9,12 @@ public sealed class TaskRanker
         IEnumerable<TaskData> tasks,
         IReadOnlyList<Repository> repositories,
         IReadOnlyList<Label> labels,
-        int taskLimit)
+        int taskLimit,
+        TaskPriorityFactors? priorityFactors = null)
     {
         var rankedTasks = tasks.ToList();
         foreach (var task in rankedTasks)
-            task.Value = task.CalculateValue(repositories, labels);
+            task.Value = task.CalculateValue(repositories, labels, priorityFactors);
 
         return rankedTasks
             .OrderByDescending(task => task.Value)

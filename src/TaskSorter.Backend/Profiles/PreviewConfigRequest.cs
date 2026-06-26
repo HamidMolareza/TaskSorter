@@ -6,11 +6,13 @@ public sealed record PreviewConfigRequest(
     string RepositoryLines,
     string LabelLines,
     int TaskLimit,
-    int DelayInMilliseconds)
+    int DelayInMilliseconds,
+    TaskPriorityFactors? PriorityFactors = null)
 {
     public ProfileConfiguration ToConfiguration() => new(
         RepositoryLines,
         LabelLines,
         TaskLimit,
-        DelayInMilliseconds);
+        DelayInMilliseconds,
+        PriorityFactors);
 }

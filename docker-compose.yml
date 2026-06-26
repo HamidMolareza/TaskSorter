@@ -1,37 +1,48 @@
 services:
   postgres:
-    image: postgres:18-alpine
+    image: docker.arvancloud.ir/postgres:18-alpine
+    network_mode: host
     environment:
       POSTGRES_DB: tasksorter
       POSTGRES_USER: tasksorter
       POSTGRES_PASSWORD: tasksorter
+    volumes:
+      - postgres-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tasksorter -d tasksorter"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U tasksorter -d tasksorter"]
       interval: 5s
       timeout: 5s
       retries: 10
-    volumes:
-      - postgres-data:/var/lib/postgresql
 
   backend:
     build:
       context: .
       dockerfile: src/TaskSorter.Backend/Dockerfile
+    network_mode: host
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__Default: Host=postgres;Port=5432;Database=tasksorter;Username=tasksorter;Password=tasksorter
+      ASPNETCORE_URLS: http://127.0.0.1:5111
+      ConnectionStrings__Default: Host=127.0.0.1;Port=5432;Database=tasksorter;Username=tasksorter;Password=tasksorter
       DataProtection__KeysPath: /var/lib/tasksorter/keys
       Cors__AllowedOrigins__0: http://localhost:5173
+      Cors__AllowedOrigins__1: http://127.0.0.1:5173
+      ProfileRun__TimeoutSeconds: 240
+      GitHub__RequestTimeoutSeconds: 45
+      GitHub__CacheEnabled: true
+      GitHub__CacheDurationSeconds: 300
+      GitHub__CacheMaxEntries: 1000
+      GitHub__QuotaProtectionEnabled: true
+      GitHub__QuotaReserveRequests: 50
+      GitHub__QuotaWarningRemaining: 250
+      GitHub__QuotaSnapshotTtlSeconds: 60
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      - "127.0.0.1:5111:8080"
     volumes:
       - data-protection-keys:/var/lib/tasksorter/keys
+      - backend-logs:/app/logs
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:5111/health"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -41,13 +52,12 @@ services:
     build:
       context: .
       dockerfile: src/TaskSorter.Frontend/Dockerfile
+    network_mode: host
     depends_on:
       backend:
         condition: service_healthy
-    ports:
-      - "127.0.0.1:5173:80"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ > /dev/null"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5173/ > /dev/null"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -56,3 +66,4 @@ services:
 volumes:
   postgres-data:
   data-protection-keys:
+  backend-logs:

@@ -15,6 +15,81 @@ partial class AppDbContextModelSnapshot : ModelSnapshot
     {
         modelBuilder.HasAnnotation("ProductVersion", "10.0.0");
 
+        modelBuilder.Entity("TaskSorter.Backend.Data.GitHubCacheEntry", b =>
+        {
+            b.Property<string>("Key")
+                .HasMaxLength(512)
+                .HasColumnType("character varying(512)");
+
+            b.Property<DateTimeOffset>("CreatedAt")
+                .HasColumnType("timestamp with time zone");
+
+            b.Property<DateTimeOffset>("ExpiresAt")
+                .HasColumnType("timestamp with time zone");
+
+            b.Property<string>("Operation")
+                .IsRequired()
+                .HasMaxLength(120)
+                .HasColumnType("character varying(120)");
+
+            b.Property<string>("Target")
+                .IsRequired()
+                .HasMaxLength(512)
+                .HasColumnType("character varying(512)");
+
+            b.Property<DateTimeOffset>("UpdatedAt")
+                .HasColumnType("timestamp with time zone");
+
+            b.Property<string>("ValueJson")
+                .IsRequired()
+                .HasColumnType("text");
+
+            b.HasKey("Key");
+
+            b.HasIndex("ExpiresAt");
+
+            b.ToTable("GitHubCacheEntries");
+        });
+
+        modelBuilder.Entity("TaskSorter.Backend.Data.GitHubQuotaSnapshotEntry", b =>
+        {
+            b.Property<string>("TokenFingerprint")
+                .HasMaxLength(64)
+                .HasColumnType("character varying(64)");
+
+            b.Property<string>("Resource")
+                .HasMaxLength(64)
+                .HasColumnType("character varying(64)");
+
+            b.Property<DateTimeOffset>("CapturedAt")
+                .HasColumnType("timestamp with time zone");
+
+            b.Property<int>("Limit")
+                .HasColumnType("integer");
+
+            b.Property<int>("Remaining")
+                .HasColumnType("integer");
+
+            b.Property<DateTimeOffset>("ResetAt")
+                .HasColumnType("timestamp with time zone");
+
+            b.Property<string>("Source")
+                .IsRequired()
+                .HasMaxLength(64)
+                .HasColumnType("character varying(64)");
+
+            b.Property<int>("Used")
+                .HasColumnType("integer");
+
+            b.HasKey("TokenFingerprint", "Resource");
+
+            b.HasIndex("CapturedAt");
+
+            b.HasIndex("ResetAt");
+
+            b.ToTable("GitHubQuotaSnapshots");
+        });
+
         modelBuilder.Entity("TaskSorter.Backend.Profiles.TaskProfile", b =>
         {
             b.Property<Guid>("Id")
@@ -40,6 +115,9 @@ partial class AppDbContextModelSnapshot : ModelSnapshot
                 .IsRequired()
                 .HasMaxLength(120)
                 .HasColumnType("character varying(120)");
+
+            b.Property<string>("PriorityFactorsJson")
+                .HasColumnType("text");
 
             b.Property<string>("RepositoryLines")
                 .IsRequired()

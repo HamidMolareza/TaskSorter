@@ -8,14 +8,14 @@ public sealed record ConfigPreviewResponse(
     IReadOnlyList<string> Warnings,
     IReadOnlyList<ValidationIssue> Errors)
 {
-    public static ConfigPreviewResponse FromPreview(ConfigPreview preview) => new(
+    public static ConfigPreviewResponse FromPreview(ConfigPreview preview, TaskPriorityFactors priorityFactors) => new(
         preview.Repositories
             .Select(repository => new RepositoryPreviewResponse(
                 repository.Owner,
                 repository.Name,
                 repository.ToString(),
                 repository.Tier.Name,
-                repository.PriorityScore))
+                priorityFactors.GetRepositoryScore(repository)))
             .ToList(),
         preview.Labels
             .Select(label => new LabelPreviewResponse(label.Name, label.DisplayName, label.Value ?? 0))

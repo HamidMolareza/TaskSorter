@@ -1,3 +1,4 @@
+using TaskSorter.Core.Configuration;
 using TaskSorter.Core.Models;
 
 namespace TaskSorter.Core.Tasks;
@@ -36,10 +37,16 @@ public sealed class TaskData
         AssignmentScore,
         LockScore);
 
-    public int CalculateValue(IReadOnlyList<Repository> repositoryPriorities, IReadOnlyList<Label> labelPriorities)
+    public int CalculateValue(
+        IReadOnlyList<Repository> repositoryPriorities,
+        IReadOnlyList<Label> labelPriorities,
+        TaskPriorityFactors? priorityFactors = null)
     {
+        priorityFactors ??= TaskPriorityFactors.Default;
         var repositoryPriority = repositoryPriorities.FirstOrDefault(repoPriority => repoPriority == Repository);
-        var repoValue = repositoryPriority?.PriorityScore ?? 0;
+        var repoValue = repositoryPriority is null
+            ? 0
+            : priorityFactors.GetRepositoryScore(repositoryPriority);
 
         var scoredLabels = Labels
             .Where(taskLabel => labelPriorities.Any(priorityLabel => priorityLabel == taskLabel))
@@ -51,25 +58,12 @@ public sealed class TaskData
         var labelValue = Labels.Sum(taskLabel =>
             labelPriorities.FirstOrDefault(priorityLabel => priorityLabel == taskLabel)?.Value ?? 0);
 
-        var statusScore = Status switch
-        {
-            "in-progress" => 60,
-            "next" => 50,
-            "waiting" => -150,
-            "blocked" => -200,
-            _ => 0
-        };
+        var statusScore = priorityFactors.GetStatusScore(Status);
 
-        var sizeScore = Size switch
-        {
-            "s" => 30,
-            "m" => 15,
-            "l" => -10,
-            _ => 0
-        };
+        var sizeScore = priorityFactors.GetSizeScore(Size);
 
-        var assignmentScore = Assigned ? 20 : 0;
-        var lockScore = Locked ? -100 : 0;
+        var assignmentScore = Assigned ? priorityFactors.AssignmentBonus : 0;
+        var lockScore = Locked ? priorityFactors.LockPenalty : 0;
 
         RepositoryScore = repoValue;
         ProjectTier = repositoryPriority?.Tier.Name ?? Models.ProjectTier.Active.Name;
