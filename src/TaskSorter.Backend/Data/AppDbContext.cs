@@ -8,6 +8,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<TaskProfile> TaskProfiles => Set<TaskProfile>();
     public DbSet<GitHubCacheEntry> GitHubCacheEntries => Set<GitHubCacheEntry>();
     public DbSet<GitHubQuotaSnapshotEntry> GitHubQuotaSnapshots => Set<GitHubQuotaSnapshotEntry>();
+    public DbSet<RepositoryTier> RepositoryTiers => Set<RepositoryTier>();
+    public DbSet<ProfileRepository> ProfileRepositories => Set<ProfileRepository>();
+    public DbSet<ProfileLabel> ProfileLabels => Set<ProfileLabel>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -40,6 +43,47 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(profile => profile.LabelLines).IsRequired();
             entity.Property(profile => profile.PriorityFactorsJson).HasColumnType("text");
             entity.Property(profile => profile.EncryptedGitHubToken).HasMaxLength(4096);
+        });
+
+        modelBuilder.Entity<RepositoryTier>(entity =>
+        {
+            entity.HasKey(tier => tier.Id);
+            entity.HasIndex(tier => tier.NormalizedName).IsUnique();
+            entity.HasIndex(tier => tier.IsDefault).IsUnique().HasFilter("\"IsDefault\" = true");
+            entity.Property(tier => tier.Name).HasMaxLength(80).IsRequired();
+            entity.Property(tier => tier.NormalizedName).HasMaxLength(80).IsRequired();
+        });
+
+        modelBuilder.Entity<ProfileRepository>(entity =>
+        {
+            entity.HasKey(repository => repository.Id);
+            entity.HasIndex(repository => new { repository.ProfileId, repository.Owner, repository.Name }).IsUnique();
+            entity.HasIndex(repository => new { repository.ProfileId, repository.SortOrder }).IsUnique();
+            entity.Property(repository => repository.Owner).HasMaxLength(100).IsRequired();
+            entity.Property(repository => repository.Name).HasMaxLength(100).IsRequired();
+            entity.HasOne(repository => repository.Profile)
+                .WithMany(profile => profile.Repositories)
+                .HasForeignKey(repository => repository.ProfileId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(repository => repository.RepositoryTier)
+                .WithMany(tier => tier.ProfileRepositories)
+                .HasForeignKey(repository => repository.RepositoryTierId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<ProfileLabel>(entity =>
+        {
+            entity.HasKey(label => label.Id);
+            entity.HasIndex(label => new { label.ProfileId, label.NormalizedName }).IsUnique();
+            entity.HasIndex(label => new { label.ProfileId, label.SortOrder })
+                .IsUnique()
+                .HasFilter("\"SortOrder\" IS NOT NULL");
+            entity.Property(label => label.Name).HasMaxLength(200).IsRequired();
+            entity.Property(label => label.NormalizedName).HasMaxLength(200).IsRequired();
+            entity.HasOne(label => label.Profile)
+                .WithMany(profile => profile.Labels)
+                .HasForeignKey(label => label.ProfileId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

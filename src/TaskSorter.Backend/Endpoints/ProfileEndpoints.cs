@@ -40,6 +40,9 @@ public static class ProfileEndpoints
             CancellationToken cancellationToken) =>
         {
             var profile = await dbContext.TaskProfiles
+                .Include(profile => profile.Repositories)
+                .ThenInclude(repository => repository.RepositoryTier)
+                .Include(profile => profile.Labels)
                 .AsNoTracking()
                 .FirstOrDefaultAsync(profile => profile.Id == id, cancellationToken);
 
@@ -52,12 +55,11 @@ public static class ProfileEndpoints
             SaveProfileRequest request,
             AppDbContext dbContext,
             ISecretProtector secretProtector,
-            ProfileConfigurationParser parser,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             var logger = CreateLogger(loggerFactory);
-            var validationErrors = ValidateRequest(request, parser);
+            var validationErrors = ValidateProfileRequest(request);
             if (validationErrors.Count > 0)
             {
                 logger.LogWarning(
@@ -72,7 +74,7 @@ public static class ProfileEndpoints
             {
                 Id = Guid.NewGuid(),
                 Name = request.Name.Trim(),
-                RepositoryLines = request.RepositoryLines,
+                RepositoryLines = string.Empty,
                 LabelLines = request.LabelLines,
                 TaskLimit = request.TaskLimit,
                 DelayInMilliseconds = request.DelayInMilliseconds,
@@ -110,12 +112,11 @@ public static class ProfileEndpoints
             SaveProfileRequest request,
             AppDbContext dbContext,
             ISecretProtector secretProtector,
-            ProfileConfigurationParser parser,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
             var logger = CreateLogger(loggerFactory);
-            var validationErrors = ValidateRequest(request, parser);
+            var validationErrors = ValidateProfileRequest(request);
             if (validationErrors.Count > 0)
             {
                 logger.LogWarning(
@@ -125,7 +126,11 @@ public static class ProfileEndpoints
                 return ValidationProblem(validationErrors);
             }
 
-            var profile = await dbContext.TaskProfiles.FirstOrDefaultAsync(profile => profile.Id == id, cancellationToken);
+            var profile = await dbContext.TaskProfiles
+                .Include(profile => profile.Repositories)
+                .ThenInclude(repository => repository.RepositoryTier)
+                .Include(profile => profile.Labels)
+                .FirstOrDefaultAsync(profile => profile.Id == id, cancellationToken);
             if (profile is null)
             {
                 logger.LogWarning("ProfileUpdateNotFound for {ProfileId}.", id);
@@ -133,7 +138,6 @@ public static class ProfileEndpoints
             }
 
             profile.Name = request.Name.Trim();
-            profile.RepositoryLines = request.RepositoryLines;
             profile.LabelLines = request.LabelLines;
             profile.TaskLimit = request.TaskLimit;
             profile.DelayInMilliseconds = request.DelayInMilliseconds;
@@ -186,6 +190,10 @@ public static class ProfileEndpoints
             return Results.NoContent();
         });
 
+        MapRepositoryTierEndpoints(group);
+        MapProfileRepositoryEndpoints(group);
+        MapProfileLabelEndpoints(group);
+
         group.MapPost("/profiles/{id:guid}/run", async (
             Guid id,
             AppDbContext dbContext,
@@ -198,6 +206,9 @@ public static class ProfileEndpoints
         {
             var logger = CreateLogger(loggerFactory);
             var profile = await dbContext.TaskProfiles
+                .Include(profile => profile.Repositories)
+                .ThenInclude(repository => repository.RepositoryTier)
+                .Include(profile => profile.Labels)
                 .AsNoTracking()
                 .FirstOrDefaultAsync(profile => profile.Id == id, cancellationToken);
             if (profile is null)
@@ -340,6 +351,9 @@ public static class ProfileEndpoints
         {
             var logger = CreateLogger(loggerFactory);
             var profile = await dbContext.TaskProfiles
+                .Include(profile => profile.Repositories)
+                .ThenInclude(repository => repository.RepositoryTier)
+                .Include(profile => profile.Labels)
                 .AsNoTracking()
                 .FirstOrDefaultAsync(profile => profile.Id == id, cancellationToken);
             if (profile is null)
@@ -536,7 +550,520 @@ public static class ProfileEndpoints
         var runRequest = await request.ReadFromJsonAsync<RunProfileRequest>(
             StreamJsonOptions,
             cancellationToken);
-        return runRequest?.ToConfiguration() ?? profile.ToConfiguration();
+        return runRequest?.ApplyTo(profile) ?? profile.ToConfiguration();
+    }
+
+    private static void MapRepositoryTierEndpoints(RouteGroupBuilder group)
+    {
+        group.MapGet("/repository-tiers", async (AppDbContext dbContext, CancellationToken cancellationToken) =>
+        {
+            var tiers = await dbContext.RepositoryTiers
+                .AsNoTracking()
+                .OrderByDescending(tier => tier.IsDefault)
+                .ThenBy(tier => tier.Name)
+                .Select(tier => new RepositoryTierResponse(
+                    tier.Id,
+                    tier.Name,
+                    tier.Score,
+                    tier.IsDefault,
+                    tier.ProfileRepositories.Count,
+                    tier.UpdatedAt))
+                .ToListAsync(cancellationToken);
+            return Results.Ok(tiers);
+        });
+
+        group.MapPost("/repository-tiers", async (
+            SaveRepositoryTierRequest request,
+            AppDbContext dbContext,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            var logger = CreateLogger(loggerFactory);
+            var name = NormalizeTierName(request.Name);
+            if (name is null)
+                return ValidationProblem([new ValidationIssue("name", "Tier name is required and must be 80 characters or fewer.")]);
+
+            if (await dbContext.RepositoryTiers.AnyAsync(tier => tier.NormalizedName == name, cancellationToken))
+                return ValidationProblem([new ValidationIssue("name", "Tier name must be unique.")]);
+
+            var now = DateTimeOffset.UtcNow;
+            var tier = new RepositoryTier
+            {
+                Id = Guid.NewGuid(),
+                Name = request.Name.Trim(),
+                NormalizedName = name,
+                Score = request.Score,
+                IsDefault = !await dbContext.RepositoryTiers.AnyAsync(cancellationToken),
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            dbContext.RepositoryTiers.Add(tier);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            logger.LogInformation("RepositoryTierCreated for {RepositoryTierId} named {RepositoryTierName}.", tier.Id, tier.Name);
+            return Results.Created($"/api/repository-tiers/{tier.Id}", RepositoryTierResponse.FromEntity(tier, 0));
+        });
+
+        group.MapPut("/repository-tiers/{id:guid}", async (
+            Guid id,
+            SaveRepositoryTierRequest request,
+            AppDbContext dbContext,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            var tier = await dbContext.RepositoryTiers.FirstOrDefaultAsync(tier => tier.Id == id, cancellationToken);
+            if (tier is null)
+                return Results.NotFound();
+
+            var name = NormalizeTierName(request.Name);
+            if (name is null)
+                return ValidationProblem([new ValidationIssue("name", "Tier name is required and must be 80 characters or fewer.")]);
+            if (await dbContext.RepositoryTiers.AnyAsync(other => other.Id != id && other.NormalizedName == name, cancellationToken))
+                return ValidationProblem([new ValidationIssue("name", "Tier name must be unique.")]);
+
+            tier.Name = request.Name.Trim();
+            tier.NormalizedName = name;
+            tier.Score = request.Score;
+            tier.UpdatedAt = DateTimeOffset.UtcNow;
+            await dbContext.SaveChangesAsync(cancellationToken);
+            CreateLogger(loggerFactory).LogInformation("RepositoryTierUpdated for {RepositoryTierId} named {RepositoryTierName}.", tier.Id, tier.Name);
+            var assignedCount = await dbContext.ProfileRepositories.CountAsync(repository => repository.RepositoryTierId == id, cancellationToken);
+            return Results.Ok(RepositoryTierResponse.FromEntity(tier, assignedCount));
+        });
+
+        group.MapPut("/repository-tiers/{id:guid}/default", async (
+            Guid id,
+            AppDbContext dbContext,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            var tier = await dbContext.RepositoryTiers.FirstOrDefaultAsync(tier => tier.Id == id, cancellationToken);
+            if (tier is null)
+                return Results.NotFound();
+
+            if (!tier.IsDefault)
+            {
+                var updatedAt = DateTimeOffset.UtcNow;
+                if (dbContext.Database.IsRelational())
+                {
+                    await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+                    await dbContext.RepositoryTiers
+                        .Where(candidate => candidate.IsDefault)
+                        .ExecuteUpdateAsync(
+                            setters => setters.SetProperty(candidate => candidate.IsDefault, false),
+                            cancellationToken);
+                    tier.IsDefault = true;
+                    tier.UpdatedAt = updatedAt;
+                    await dbContext.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                }
+                else
+                {
+                    var currentDefault = await dbContext.RepositoryTiers.Where(candidate => candidate.IsDefault).ToListAsync(cancellationToken);
+                    foreach (var candidate in currentDefault)
+                        candidate.IsDefault = false;
+                    await dbContext.SaveChangesAsync(cancellationToken);
+                    tier.IsDefault = true;
+                    tier.UpdatedAt = updatedAt;
+                    await dbContext.SaveChangesAsync(cancellationToken);
+                }
+            }
+
+            CreateLogger(loggerFactory).LogInformation("RepositoryTierSetDefault for {RepositoryTierId} named {RepositoryTierName}.", tier.Id, tier.Name);
+            var assignedCount = await dbContext.ProfileRepositories.CountAsync(repository => repository.RepositoryTierId == id, cancellationToken);
+            return Results.Ok(RepositoryTierResponse.FromEntity(tier, assignedCount));
+        });
+
+        group.MapDelete("/repository-tiers/{id:guid}", async (
+            Guid id,
+            bool? reassignAssignedRepositories,
+            AppDbContext dbContext,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            var tier = await dbContext.RepositoryTiers.FirstOrDefaultAsync(tier => tier.Id == id, cancellationToken);
+            if (tier is null)
+                return Results.NotFound();
+            if (tier.IsDefault)
+                return Results.Conflict(new { message = "The default tier cannot be deleted. Choose another default tier first." });
+
+            var assigned = await dbContext.ProfileRepositories
+                .Where(repository => repository.RepositoryTierId == id)
+                .ToListAsync(cancellationToken);
+            if (assigned.Count > 0 && reassignAssignedRepositories != true)
+                return Results.Conflict(new { message = $"{assigned.Count} repository assignment(s) use this tier.", assignedRepositoryCount = assigned.Count });
+
+            if (assigned.Count > 0)
+            {
+                var defaultTier = await dbContext.RepositoryTiers.FirstOrDefaultAsync(candidate => candidate.IsDefault, cancellationToken);
+                if (defaultTier is null)
+                    return Results.Problem("A default repository tier is required before reassignment.", statusCode: StatusCodes.Status409Conflict);
+                foreach (var repository in assigned)
+                {
+                    repository.RepositoryTierId = defaultTier.Id;
+                    repository.UpdatedAt = DateTimeOffset.UtcNow;
+                }
+            }
+
+            dbContext.RepositoryTiers.Remove(tier);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            CreateLogger(loggerFactory).LogInformation("RepositoryTierDeleted for {RepositoryTierId} named {RepositoryTierName}; reassigned {ReassignedCount} repository assignment(s).", id, tier.Name, assigned.Count);
+            return Results.NoContent();
+        });
+    }
+
+    private static void MapProfileRepositoryEndpoints(RouteGroupBuilder group)
+    {
+        group.MapGet("/profiles/{profileId:guid}/repositories", async (Guid profileId, AppDbContext dbContext, CancellationToken cancellationToken) =>
+        {
+            var repositories = await dbContext.ProfileRepositories
+                .AsNoTracking()
+                .Include(repository => repository.RepositoryTier)
+                .Where(repository => repository.ProfileId == profileId)
+                .OrderBy(repository => repository.SortOrder)
+                .ToListAsync(cancellationToken);
+            return Results.Ok(repositories.Select((repository, index) => ProfileRepositoryResponse.FromEntity(repository, repositories.Count - index + 1)).ToList());
+        });
+
+        group.MapPost("/profiles/{profileId:guid}/repositories", async (
+            Guid profileId,
+            SaveProfileRepositoryRequest request,
+            AppDbContext dbContext,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            if (!await dbContext.TaskProfiles.AnyAsync(profile => profile.Id == profileId, cancellationToken))
+                return Results.NotFound();
+            var coordinates = NormalizeRepository(request.Owner, request.Name);
+            if (coordinates is null)
+                return ValidationProblem([new ValidationIssue("repository", "Repository must use an owner and name without slashes.")]);
+            if (await dbContext.ProfileRepositories.AnyAsync(repository => repository.ProfileId == profileId && repository.Owner == coordinates.Value.Owner && repository.Name == coordinates.Value.Name, cancellationToken))
+                return ValidationProblem([new ValidationIssue("repository", "This repository is already configured for the profile.")]);
+
+            var tier = await ResolveTierAsync(request.RepositoryTierId, dbContext, cancellationToken);
+            if (tier is null)
+                return ValidationProblem([new ValidationIssue("repositoryTierId", "Choose a valid repository tier.")]);
+            var sortOrder = await dbContext.ProfileRepositories.CountAsync(repository => repository.ProfileId == profileId, cancellationToken);
+            var now = DateTimeOffset.UtcNow;
+            var repository = new ProfileRepository
+            {
+                Id = Guid.NewGuid(),
+                ProfileId = profileId,
+                Owner = coordinates.Value.Owner,
+                Name = coordinates.Value.Name,
+                RepositoryTierId = tier.Id,
+                RepositoryTier = tier,
+                SortOrder = sortOrder,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            dbContext.ProfileRepositories.Add(repository);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            CreateLogger(loggerFactory).LogInformation("ProfileRepositoryCreated for {ProfileId}: {RepositoryFullName} using tier {RepositoryTierId}.", profileId, repository.FullName, tier.Id);
+            return Results.Created($"/api/profiles/{profileId}/repositories/{repository.Id}", ProfileRepositoryResponse.FromEntity(repository, sortOrder + 1));
+        });
+
+        group.MapPut("/profiles/{profileId:guid}/repositories/{id:guid}", async (
+            Guid profileId,
+            Guid id,
+            UpdateProfileRepositoryRequest request,
+            AppDbContext dbContext,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            var repository = await dbContext.ProfileRepositories
+                .Include(candidate => candidate.RepositoryTier)
+                .FirstOrDefaultAsync(candidate => candidate.Id == id && candidate.ProfileId == profileId, cancellationToken);
+            if (repository is null)
+                return Results.NotFound();
+            var coordinates = NormalizeRepository(request.Owner, request.Name);
+            if (coordinates is null)
+                return ValidationProblem([new ValidationIssue("repository", "Repository must use an owner and name without slashes.")]);
+            if (await dbContext.ProfileRepositories.AnyAsync(candidate => candidate.ProfileId == profileId && candidate.Id != id && candidate.Owner == coordinates.Value.Owner && candidate.Name == coordinates.Value.Name, cancellationToken))
+                return ValidationProblem([new ValidationIssue("repository", "This repository is already configured for the profile.")]);
+            var tier = await ResolveTierAsync(request.RepositoryTierId, dbContext, cancellationToken);
+            if (tier is null)
+                return ValidationProblem([new ValidationIssue("repositoryTierId", "Choose a valid repository tier.")]);
+
+            repository.Owner = coordinates.Value.Owner;
+            repository.Name = coordinates.Value.Name;
+            repository.RepositoryTierId = tier.Id;
+            repository.RepositoryTier = tier;
+            repository.UpdatedAt = DateTimeOffset.UtcNow;
+            await dbContext.SaveChangesAsync(cancellationToken);
+            CreateLogger(loggerFactory).LogInformation("ProfileRepositoryUpdated for {ProfileId}: {RepositoryId}.", profileId, id);
+            var count = await dbContext.ProfileRepositories.CountAsync(candidate => candidate.ProfileId == profileId && candidate.SortOrder <= repository.SortOrder, cancellationToken);
+            var total = await dbContext.ProfileRepositories.CountAsync(candidate => candidate.ProfileId == profileId, cancellationToken);
+            return Results.Ok(ProfileRepositoryResponse.FromEntity(repository, total - count + 1));
+        });
+
+        group.MapDelete("/profiles/{profileId:guid}/repositories/{id:guid}", async (Guid profileId, Guid id, AppDbContext dbContext, ILoggerFactory loggerFactory, CancellationToken cancellationToken) =>
+        {
+            var repository = await dbContext.ProfileRepositories.FirstOrDefaultAsync(candidate => candidate.Id == id && candidate.ProfileId == profileId, cancellationToken);
+            if (repository is null)
+                return Results.NotFound();
+            dbContext.ProfileRepositories.Remove(repository);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await NormalizeRepositorySortOrderAsync(profileId, dbContext, cancellationToken);
+            CreateLogger(loggerFactory).LogInformation("ProfileRepositoryDeleted for {ProfileId}: {RepositoryId}.", profileId, id);
+            return Results.NoContent();
+        });
+
+        group.MapPut("/profiles/{profileId:guid}/repositories/order", async (Guid profileId, ReorderProfileRepositoriesRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+        {
+            var repositories = await dbContext.ProfileRepositories.Where(repository => repository.ProfileId == profileId).ToListAsync(cancellationToken);
+            if (repositories.Count != request.RepositoryIds.Count || repositories.Select(repository => repository.Id).Except(request.RepositoryIds).Any())
+                return ValidationProblem([new ValidationIssue("repositoryIds", "The reorder list must contain every repository exactly once.")]);
+            await ApplyRepositoryOrderAsync(repositories, request.RepositoryIds, dbContext, cancellationToken);
+            return Results.NoContent();
+        });
+    }
+
+    private static void MapProfileLabelEndpoints(RouteGroupBuilder group)
+    {
+        group.MapGet("/profiles/{profileId:guid}/labels", async (Guid profileId, AppDbContext dbContext, CancellationToken cancellationToken) =>
+        {
+            var labels = await dbContext.ProfileLabels
+                .AsNoTracking()
+                .Where(label => label.ProfileId == profileId)
+                .OrderBy(label => label.IsIgnored)
+                .ThenBy(label => !label.SortOrder.HasValue)
+                .ThenBy(label => label.SortOrder)
+                .ToListAsync(cancellationToken);
+            return Results.Ok(labels.Select(ProfileLabelResponse.FromEntity).ToList());
+        });
+
+        group.MapPost("/profiles/{profileId:guid}/labels/discover", async (
+            Guid profileId,
+            AppDbContext dbContext,
+            ISecretProtector secretProtector,
+            IGitHubTaskClient gitHubTaskClient,
+            IConfiguration configuration,
+            HttpContext httpContext,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            var logger = CreateLogger(loggerFactory);
+            var profile = await dbContext.TaskProfiles
+                .Include(candidate => candidate.Repositories)
+                .ThenInclude(repository => repository.RepositoryTier)
+                .Include(candidate => candidate.Labels)
+                .FirstOrDefaultAsync(candidate => candidate.Id == profileId, cancellationToken);
+            if (profile is null)
+                return Results.NotFound();
+            if (profile.Repositories.Count == 0)
+                return ValidationProblem([new ValidationIssue("repositories", "Add at least one repository before discovering labels.")]);
+
+            var token = secretProtector.Unprotect(profile.EncryptedGitHubToken);
+            if (string.IsNullOrWhiteSpace(token))
+                return ValidationProblem([new ValidationIssue("githubToken", "GitHub token is required before discovering labels.")]);
+
+            var refresh = ReadRefreshQuery(httpContext);
+            var requestTimeout = ReadPositiveTimeout(
+                configuration,
+                "GitHub:RequestTimeoutSeconds",
+                DefaultGitHubRequestTimeoutSeconds);
+            var repositories = profile.ToConfiguration().ConfiguredRepositories ?? [];
+            using (LogContext.PushProperty("ProfileId", profile.Id))
+            using (LogContext.PushProperty("ProfileName", profile.Name))
+            {
+                logger.LogInformation(
+                    "ProfileLabelDiscoveryRequested for {ProfileId} with {RepositoryCount} repository target(s), cache refresh {RefreshGitHubCache}.",
+                    profile.Id,
+                    repositories.Count,
+                    refresh);
+
+                var fetch = await gitHubTaskClient.GetRepositoryTasksAsync(
+                    repositories,
+                    token,
+                    profile.DelayInMilliseconds,
+                    requestTimeout,
+                    refresh,
+                    quotaOverride: false,
+                    cancellationToken);
+                var discoveredAt = DateTimeOffset.UtcNow;
+                var discovered = fetch.Tasks
+                    .SelectMany(task => task.Labels)
+                    .GroupBy(label => label.Name, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.First())
+                    .ToList();
+                var discoveredNames = discovered
+                    .Select(label => label.Name)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var removedLabels = profile.Labels
+                    .Where(label => !discoveredNames.Contains(label.NormalizedName))
+                    .ToList();
+                dbContext.ProfileLabels.RemoveRange(removedLabels);
+                foreach (var label in removedLabels)
+                    profile.Labels.Remove(label);
+
+                var existing = profile.Labels.ToDictionary(label => label.NormalizedName, StringComparer.OrdinalIgnoreCase);
+                var newLabelCount = 0;
+
+                foreach (var label in discovered)
+                {
+                    if (existing.TryGetValue(label.Name, out var existingLabel))
+                    {
+                        existingLabel.LastDiscoveredAt = discoveredAt;
+                        existingLabel.UpdatedAt = discoveredAt;
+                        continue;
+                    }
+
+                    var profileLabel = new ProfileLabel
+                    {
+                        Id = Guid.NewGuid(),
+                        ProfileId = profile.Id,
+                        Profile = profile,
+                        Name = label.DisplayName,
+                        NormalizedName = label.Name,
+                        SortOrder = null,
+                        IsIgnored = false,
+                        FirstDiscoveredAt = discoveredAt,
+                        LastDiscoveredAt = discoveredAt,
+                        UpdatedAt = discoveredAt
+                    };
+                    dbContext.ProfileLabels.Add(profileLabel);
+                    existing.Add(profileLabel.NormalizedName, profileLabel);
+                    newLabelCount++;
+                }
+
+                profile.UpdatedAt = discoveredAt;
+                await dbContext.SaveChangesAsync(cancellationToken);
+                logger.LogInformation(
+                    "ProfileLabelDiscoveryCompleted for {ProfileId} with {DiscoveredLabelCount} distinct label(s), {NewLabelCount} new pending label(s), {RemovedLabelCount} removed label(s), and {GitHubRequestCount} GitHub request(s).",
+                    profile.Id,
+                    discovered.Count,
+                    newLabelCount,
+                    removedLabels.Count,
+                    fetch.Cache.GitHubRequestCount);
+
+                return Results.Ok(new LabelDiscoveryResponse(
+                    ProfileLabelResponses(profile.Labels),
+                    newLabelCount,
+                    removedLabels.Count,
+                    TaskRunCacheResponse.FromSummary(fetch.Cache),
+                    TaskRunQuotaResponse.FromSummary(fetch.Quota),
+                    discoveredAt));
+            }
+        });
+
+        group.MapPut("/profiles/{profileId:guid}/labels/{id:guid}", async (
+            Guid profileId,
+            Guid id,
+            UpdateProfileLabelRequest request,
+            AppDbContext dbContext,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            var label = await dbContext.ProfileLabels.FirstOrDefaultAsync(candidate => candidate.Id == id && candidate.ProfileId == profileId, cancellationToken);
+            if (label is null)
+                return Results.NotFound();
+            label.IsIgnored = request.IsIgnored;
+            label.SortOrder = null;
+            label.UpdatedAt = DateTimeOffset.UtcNow;
+            await dbContext.SaveChangesAsync(cancellationToken);
+            CreateLogger(loggerFactory).LogInformation("ProfileLabelUpdated for {ProfileId}: {ProfileLabelId}, ignored {IsIgnored}; restored labels require ranking.", profileId, label.Id, label.IsIgnored);
+            return Results.Ok(ProfileLabelResponse.FromEntity(label));
+        });
+
+        group.MapPut("/profiles/{profileId:guid}/labels/order", async (
+            Guid profileId,
+            ReorderProfileLabelsRequest request,
+            AppDbContext dbContext,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            var labels = await dbContext.ProfileLabels
+                .Where(label => label.ProfileId == profileId)
+                .ToListAsync(cancellationToken);
+            var rankedLabels = labels.Where(label => !label.IsIgnored && label.SortOrder is not null).ToList();
+            var pendingLabels = labels.Where(label => !label.IsIgnored && label.SortOrder is null).ToList();
+            var submittedIds = request.LabelIds.ToList();
+            var submittedIdSet = submittedIds.ToHashSet();
+            var rankedIdSet = rankedLabels.Select(label => label.Id).ToHashSet();
+            var pendingIdSet = pendingLabels.Select(label => label.Id).ToHashSet();
+            var activatedIds = submittedIds.Where(id => !rankedIdSet.Contains(id)).ToList();
+            if (submittedIds.Count != submittedIdSet.Count
+                || rankedLabels.Select(label => label.Id).Except(submittedIdSet).Any()
+                || submittedIds.Any(id => !rankedIdSet.Contains(id) && !pendingIdSet.Contains(id))
+                || activatedIds.Count > 1
+                || submittedIds.Count != rankedLabels.Count + activatedIds.Count)
+            {
+                return ValidationProblem([new ValidationIssue("labelIds", "The reorder request must contain every ranked label once and may add one pending label.")]);
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            foreach (var label in rankedLabels)
+            {
+                label.SortOrder = null;
+                label.UpdatedAt = now;
+            }
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            for (var index = 0; index < submittedIds.Count; index++)
+            {
+                var label = labels.Single(candidate => candidate.Id == submittedIds[index]);
+                label.SortOrder = index;
+                label.UpdatedAt = now;
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+            CreateLogger(loggerFactory).LogInformation("ProfileLabelOrderUpdated for {ProfileId} with {ProfileLabelCount} ranked label(s) and {ActivatedLabelCount} newly ranked label(s).", profileId, submittedIds.Count, activatedIds.Count);
+            return Results.Ok(ProfileLabelResponses(labels));
+        });
+    }
+
+    private static IReadOnlyList<ProfileLabelResponse> ProfileLabelResponses(IEnumerable<ProfileLabel> labels) =>
+        labels
+            .OrderBy(label => label.IsIgnored)
+            .ThenBy(label => label.SortOrder is null)
+            .ThenBy(label => label.SortOrder)
+            .Select(ProfileLabelResponse.FromEntity)
+            .ToList();
+
+    private static async Task<RepositoryTier?> ResolveTierAsync(Guid? repositoryTierId, AppDbContext dbContext, CancellationToken cancellationToken) =>
+        repositoryTierId is { } id
+            ? await dbContext.RepositoryTiers.FirstOrDefaultAsync(tier => tier.Id == id, cancellationToken)
+            : await dbContext.RepositoryTiers.FirstOrDefaultAsync(tier => tier.IsDefault, cancellationToken);
+
+    private static async Task NormalizeRepositorySortOrderAsync(Guid profileId, AppDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var repositories = await dbContext.ProfileRepositories.Where(repository => repository.ProfileId == profileId).OrderBy(repository => repository.SortOrder).ToListAsync(cancellationToken);
+        await ApplyRepositoryOrderAsync(repositories, repositories.Select(repository => repository.Id).ToList(), dbContext, cancellationToken);
+    }
+
+    private static async Task ApplyRepositoryOrderAsync(
+        IReadOnlyList<ProfileRepository> repositories,
+        IReadOnlyList<Guid> orderedRepositoryIds,
+        AppDbContext dbContext,
+        CancellationToken cancellationToken)
+    {
+        if (repositories.Count == 0)
+            return;
+
+        var temporaryOffset = repositories.Max(repository => repository.SortOrder) + repositories.Count + 1;
+        foreach (var repository in repositories)
+            repository.SortOrder += temporaryOffset;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        for (var index = 0; index < orderedRepositoryIds.Count; index++)
+            repositories.Single(repository => repository.Id == orderedRepositoryIds[index]).SortOrder = index;
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static (string Owner, string Name)? NormalizeRepository(string owner, string name)
+    {
+        var normalizedOwner = owner?.Trim().ToLowerInvariant();
+        var normalizedName = name?.Trim().ToLowerInvariant();
+        return string.IsNullOrWhiteSpace(normalizedOwner) || string.IsNullOrWhiteSpace(normalizedName)
+               || normalizedOwner.Contains('/') || normalizedName.Contains('/')
+            ? null
+            : (normalizedOwner, normalizedName);
+    }
+
+    private static string? NormalizeTierName(string? name)
+    {
+        var normalizedName = name?.Trim().ToLowerInvariant();
+        return string.IsNullOrWhiteSpace(normalizedName) || normalizedName.Length > 80 ? null : normalizedName;
     }
 
     private static bool HasJsonBody(HttpRequest request) =>
@@ -575,15 +1102,18 @@ public static class ProfileEndpoints
                 CorrelationId: correlationId),
             cancellationToken);
 
-    private static IReadOnlyList<ValidationIssue> ValidateRequest(SaveProfileRequest request, ProfileConfigurationParser parser)
+    private static IReadOnlyList<ValidationIssue> ValidateProfileRequest(SaveProfileRequest request)
     {
         var errors = new List<ValidationIssue>();
 
         if (string.IsNullOrWhiteSpace(request.Name))
             errors.Add(new ValidationIssue("name", "Profile name is required."));
 
-        var preview = parser.Preview(request.ToConfiguration());
-        errors.AddRange(preview.Errors);
+        if (request.TaskLimit <= 0)
+            errors.Add(new ValidationIssue("taskLimit", "Task limit must be greater than 0."));
+
+        if (request.DelayInMilliseconds < 0)
+            errors.Add(new ValidationIssue("delayInMilliseconds", "Delay must be 0 or greater."));
 
         return errors;
     }

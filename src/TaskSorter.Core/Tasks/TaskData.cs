@@ -18,8 +18,6 @@ public sealed class TaskData
     public int? Value { get; set; }
     public int RepositoryScore { get; set; }
     public int LabelScore { get; set; }
-    public int StatusScore { get; set; }
-    public int SizeScore { get; set; }
     public int AssignmentScore { get; set; }
     public int LockScore { get; set; }
     public List<Label> ScoredLabels { get; set; } = [];
@@ -32,8 +30,6 @@ public sealed class TaskData
     public ScoreBreakdown ScoreBreakdown => new(
         RepositoryScore,
         LabelScore,
-        StatusScore,
-        SizeScore,
         AssignmentScore,
         LockScore);
 
@@ -58,24 +54,18 @@ public sealed class TaskData
         var labelValue = Labels.Sum(taskLabel =>
             labelPriorities.FirstOrDefault(priorityLabel => priorityLabel == taskLabel)?.Value ?? 0);
 
-        var statusScore = priorityFactors.GetStatusScore(Status);
-
-        var sizeScore = priorityFactors.GetSizeScore(Size);
-
         var assignmentScore = Assigned ? priorityFactors.AssignmentBonus : 0;
         var lockScore = Locked ? priorityFactors.LockPenalty : 0;
 
         RepositoryScore = repoValue;
         ProjectTier = repositoryPriority?.Tier.Name ?? Models.ProjectTier.Active.Name;
         LabelScore = labelValue;
-        StatusScore = statusScore;
-        SizeScore = sizeScore;
         AssignmentScore = assignmentScore;
         LockScore = lockScore;
         ScoredLabels = scoredLabels;
         UnscoredLabels = unscoredLabels;
 
-        return repoValue + labelValue + statusScore + sizeScore + assignmentScore + lockScore;
+        return repoValue + labelValue + assignmentScore + lockScore;
     }
 
     private bool HasLabel(string name) =>

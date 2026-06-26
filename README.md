@@ -45,56 +45,25 @@ PostgreSQL data, persisted GitHub cache entries, and ASP.NET Core Data Protectio
 
 ## Usage
 
-1. Select or create a profile.
-2. Paste repository priority lines and label priority lines.
-3. Set `Top`, request delay, and priority factors.
-4. Save a GitHub token for the profile.
-5. Run the profile and review the ranked queue.
+1. Use the profile avatar in the header to see the active profile, switch to another profile, or create one.
+2. Add repository rows, select a tier for each one, then drag rows or use the move controls to set their order.
+3. Discover repository labels, then drag each new label into its unique priority position or ignore it.
+4. Open the Settings tab to rename the active profile or enter its GitHub token.
+5. Open Ranked Queue, choose `Top` and `Delay`, then run the profile and review its results.
 
-Runs use the current form values, even before you save profile edits. For example, changing `Top` from 10 to 15 and clicking `Run` re-ranks the current GitHub task data up to 15 items without requiring `Save`.
+Existing profiles save automatically after edits. The profile avatar menu saves the current profile before switching. New profiles use an explicit Create action from that menu. Running a profile flushes current profile changes first, so changing `Top` from 10 to 15 re-ranks the current GitHub task data up to 15 items.
 
 Runs read GitHub issues for the selected profile token and can take time on large repository lists. Docker Compose defaults to a 240 second profile-run timeout, a 45 second timeout for each GitHub API request, and a 5 minute persisted backend cache for successful GitHub reads. The cache stores normalized GitHub task data, not final ranked result slices, so changes to `Top` or label scoring can reuse cached GitHub items and produce a new ranked queue. Cache entries are stored in PostgreSQL until their TTL expires and are warmed back into memory after backend container restarts. Use the refresh action or the Cache tab `Clear cache and refresh` button when you need to bypass cached GitHub data and fetch fresh issue lists. The Cache tab shows whether the last run used cached data, GitHub reads, refresh, or a mix.
 
-Repository lines use this format:
+Repository tiers are global database records, seeded with `core`, `active`, `maintenance`, `paused`, and `archive`. The Scoring tab lets you create, rename, score, set the default, and delete tiers. A repository receives exactly one tier from its combobox; deleting an assigned non-default tier requires confirmation and moves affected repositories to the default tier.
 
-```text
-owner/repo core
-owner/active-project active
-owner/maintenance-project maintenance
-```
+The Labels tab collects distinct labels from configured repository issues. It reuses persisted GitHub cache entries, fetching only stale or missing repository targets while respecting quota protection. Discovery reconciles the saved labels with the repositories: labels no longer found are removed, while existing order and ignore choices are retained. New labels stay highlighted until dragged into the ranked list or ignored. Every ranked label has one unique position; ignored labels can be restored as pending labels.
 
-Valid tiers are `core`, `active`, `maintenance`, `paused`, and `archive`. Repositories without a tier default to `active`.
-
-Label lines use descending priority:
-
-```text
-priority/critical
-status/in-progress
-status/next
-priority/high
-type/bug
-priority/medium
-size/s
-size/m
-type/feature
-type/docs
-priority/low
-size/l
-```
-
-TaskSorter also recognizes older labels such as `priority-high`, `scope-bug`, and `status-in-progress`.
-
-Priority factors are editable from the web panel:
-
-- Repository tier scores: `core`, `active`, `maintenance`, `paused`, `archive`
-- Status scores: `in-progress`, `next`, `waiting`, `blocked`, default
-- Size scores: `s`, `m`, `l`, default
-- Assignment bonus
-- Lock penalty
+Scoring contains global repository tier management plus per-profile assignment bonus and lock penalty tuning. Labels remain dynamic and are configured only in the Labels tab.
 
 ## How Ranking Works
 
-TaskSorter fetches open issues and pull requests without modifying GitHub. Each task is scored from repository priority, project tier, configured labels, status labels, size labels, assignment, and lock state. The weights come from the saved profile’s priority factors, which are editable in the Priority tab. The dashboard shows the final score and score breakdown for each ranked task.
+TaskSorter fetches open issues and pull requests without modifying GitHub. Each task is scored from repository row order, its selected repository tier score, configured label priorities, assignment, and lock state. Labels such as `status/*` and `size/*` are normal label priority entries, so their weights belong in the Labels tab. The dashboard shows each repository's calculated priority and the final task score breakdown.
 
 ## Local Development
 

@@ -90,6 +90,55 @@ partial class AppDbContextModelSnapshot : ModelSnapshot
             b.ToTable("GitHubQuotaSnapshots");
         });
 
+        modelBuilder.Entity("TaskSorter.Backend.Profiles.ProfileRepository", b =>
+        {
+            b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("uuid");
+            b.Property<DateTimeOffset>("CreatedAt").HasColumnType("timestamp with time zone");
+            b.Property<string>("Name").IsRequired().HasMaxLength(100).HasColumnType("character varying(100)");
+            b.Property<string>("Owner").IsRequired().HasMaxLength(100).HasColumnType("character varying(100)");
+            b.Property<Guid>("ProfileId").HasColumnType("uuid");
+            b.Property<Guid>("RepositoryTierId").HasColumnType("uuid");
+            b.Property<int>("SortOrder").HasColumnType("integer");
+            b.Property<DateTimeOffset>("UpdatedAt").HasColumnType("timestamp with time zone");
+            b.HasKey("Id");
+            b.HasIndex("ProfileId", "Owner", "Name").IsUnique();
+            b.HasIndex("ProfileId", "SortOrder").IsUnique();
+            b.HasIndex("RepositoryTierId");
+            b.ToTable("ProfileRepositories");
+        });
+
+        modelBuilder.Entity("TaskSorter.Backend.Profiles.ProfileLabel", b =>
+        {
+            b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("uuid");
+            b.Property<DateTimeOffset>("FirstDiscoveredAt").HasColumnType("timestamp with time zone");
+            b.Property<bool>("IsIgnored").HasColumnType("boolean");
+            b.Property<DateTimeOffset?>("LastDiscoveredAt").HasColumnType("timestamp with time zone");
+            b.Property<string>("Name").IsRequired().HasMaxLength(200).HasColumnType("character varying(200)");
+            b.Property<string>("NormalizedName").IsRequired().HasMaxLength(200).HasColumnType("character varying(200)");
+            b.Property<Guid>("ProfileId").HasColumnType("uuid");
+            b.Property<int?>("SortOrder").HasColumnType("integer");
+            b.Property<DateTimeOffset>("UpdatedAt").HasColumnType("timestamp with time zone");
+            b.HasKey("Id");
+            b.HasIndex("ProfileId", "NormalizedName").IsUnique();
+            b.HasIndex("ProfileId", "SortOrder").IsUnique().HasFilter("\"SortOrder\" IS NOT NULL");
+            b.ToTable("ProfileLabels");
+        });
+
+        modelBuilder.Entity("TaskSorter.Backend.Profiles.RepositoryTier", b =>
+        {
+            b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("uuid");
+            b.Property<DateTimeOffset>("CreatedAt").HasColumnType("timestamp with time zone");
+            b.Property<bool>("IsDefault").HasColumnType("boolean");
+            b.Property<string>("Name").IsRequired().HasMaxLength(80).HasColumnType("character varying(80)");
+            b.Property<string>("NormalizedName").IsRequired().HasMaxLength(80).HasColumnType("character varying(80)");
+            b.Property<int>("Score").HasColumnType("integer");
+            b.Property<DateTimeOffset>("UpdatedAt").HasColumnType("timestamp with time zone");
+            b.HasKey("Id");
+            b.HasIndex("IsDefault").IsUnique().HasFilter("\"IsDefault\" = true");
+            b.HasIndex("NormalizedName").IsUnique();
+            b.ToTable("RepositoryTiers");
+        });
+
         modelBuilder.Entity("TaskSorter.Backend.Profiles.TaskProfile", b =>
         {
             b.Property<Guid>("Id")
@@ -135,6 +184,29 @@ partial class AppDbContextModelSnapshot : ModelSnapshot
                 .IsUnique();
 
             b.ToTable("TaskProfiles");
+        });
+
+        modelBuilder.Entity("TaskSorter.Backend.Profiles.ProfileRepository", b =>
+        {
+            b.HasOne("TaskSorter.Backend.Profiles.TaskProfile", "Profile")
+                .WithMany("Repositories")
+                .HasForeignKey("ProfileId")
+                .OnDelete(DeleteBehavior.Cascade)
+                .IsRequired();
+            b.HasOne("TaskSorter.Backend.Profiles.RepositoryTier", "RepositoryTier")
+                .WithMany("ProfileRepositories")
+                .HasForeignKey("RepositoryTierId")
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired();
+        });
+
+        modelBuilder.Entity("TaskSorter.Backend.Profiles.ProfileLabel", b =>
+        {
+            b.HasOne("TaskSorter.Backend.Profiles.TaskProfile", "Profile")
+                .WithMany("Labels")
+                .HasForeignKey("ProfileId")
+                .OnDelete(DeleteBehavior.Cascade)
+                .IsRequired();
         });
     }
 }

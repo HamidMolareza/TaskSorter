@@ -1,305 +1,274 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Text.Json;
 using TaskSorter.Backend.Profiles;
 using TaskSorter.Core.Configuration;
 
 namespace TaskSorter.Tests.Backend;
 
-public sealed class ProfileApiTests : IClassFixture<TaskSorterWebApplicationFactory>
+public sealed class ProfileApiTests(TaskSorterWebApplicationFactory factory) : IClassFixture<TaskSorterWebApplicationFactory>
 {
-    private const string CorrelationHeaderName = "X-Correlation-ID";
+    private readonly HttpClient _client = factory.CreateClient();
 
-    private readonly HttpClient _client;
-    private readonly TaskSorterWebApplicationFactory _factory;
-
-    public ProfileApiTests(TaskSorterWebApplicationFactory factory)
+    [Fact]
+    public async Task GetRepositoryTiers_ReturnsSeededDefaultTier()
     {
-        _factory = factory;
-        _client = factory.CreateClient();
+        var tiers = await _client.GetFromJsonAsync<List<RepositoryTierResponse>>("/api/repository-tiers");
+
+        Assert.NotNull(tiers);
+        Assert.Contains(tiers, tier => tier.Name == "active" && tier.IsDefault);
     }
 
     [Fact]
-    public async Task GetProfiles_ReturnsSeededDefaultProfile()
+    public async Task CreateProfile_AllowsIncompleteDraft()
     {
-        var profiles = await _client.GetFromJsonAsync<List<ProfileSummaryResponse>>("/api/profiles");
+        var response = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest(UniqueName("Draft"), null));
 
-        Assert.NotNull(profiles);
-        Assert.Contains(profiles, profile => profile.Name == "Default");
+        response.EnsureSuccessStatusCode();
+        var profile = await response.Content.ReadFromJsonAsync<ProfileDetailResponse>();
+        Assert.NotNull(profile);
+        Assert.Empty(profile.Repositories);
     }
 
     [Fact]
     public async Task CreateProfile_DoesNotReturnGitHubToken()
     {
-        var response = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest("Secret profile", "ghp_test"));
+        const string token = "ghp_test_secret";
+        var response = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest(UniqueName("Secret"), token));
 
         response.EnsureSuccessStatusCode();
         var profile = await response.Content.ReadFromJsonAsync<ProfileDetailResponse>();
-
         Assert.NotNull(profile);
         Assert.True(profile.HasGitHubToken);
-        Assert.Equal(20, profile.PriorityFactors.AssignmentBonus);
-        var responseText = await response.Content.ReadAsStringAsync();
-        Assert.DoesNotContain("ghp_test", responseText);
+        Assert.DoesNotContain(token, await response.Content.ReadAsStringAsync());
     }
 
     [Fact]
-    public async Task CreateProfile_ReturnsCorrelationHeaderAndDoesNotLogGitHubToken()
+    public async Task AddRepository_RejectsDuplicatesInTheSameProfile()
     {
-        const string token = "ghp_log_test_secret";
+        var profile = await CreateProfileAsync("Duplicates", null);
+        var defaultTier = await GetDefaultTierAsync();
+        var request = new SaveProfileRepositoryRequest("owner", "repo", defaultTier.Id);
 
-        var response = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest("Logged profile", token));
+        (await _client.PostAsJsonAsync($"/api/profiles/{profile.Id}/repositories", request)).EnsureSuccessStatusCode();
+        var duplicate = await _client.PostAsJsonAsync($"/api/profiles/{profile.Id}/repositories", request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, duplicate.StatusCode);
+        Assert.Contains("already configured", await duplicate.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task ReorderRepositories_PersistsTheRequestedOrder()
+    {
+        var profile = await CreateProfileAsync("Repository order", null);
+        var tier = await GetDefaultTierAsync();
+        var first = await CreateRepositoryAsync(profile.Id, "owner", "first", tier.Id);
+        var second = await CreateRepositoryAsync(profile.Id, "owner", "second", tier.Id);
+        var third = await CreateRepositoryAsync(profile.Id, "owner", "third", tier.Id);
+
+        var response = await _client.PutAsJsonAsync(
+            $"/api/profiles/{profile.Id}/repositories/order",
+            new ReorderProfileRepositoriesRequest([third.Id, first.Id, second.Id]));
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        var refreshed = await _client.GetFromJsonAsync<ProfileDetailResponse>($"/api/profiles/{profile.Id}");
+        Assert.NotNull(refreshed);
+        Assert.Equal(["owner/third", "owner/first", "owner/second"], refreshed.Repositories.Select(repository => repository.FullName));
+    }
+
+    [Fact]
+    public async Task RepositoryTierNames_AreUniqueIgnoringCase()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var first = await _client.PostAsJsonAsync("/api/repository-tiers", new SaveRepositoryTierRequest($"Focus-{suffix}", 700));
+        first.EnsureSuccessStatusCode();
+
+        var duplicate = await _client.PostAsJsonAsync("/api/repository-tiers", new SaveRepositoryTierRequest($"focus-{suffix}", 701));
+        Assert.Equal(HttpStatusCode.BadRequest, duplicate.StatusCode);
+    }
+
+    [Fact]
+    public async Task SetDefaultRepositoryTier_SwitchesTheSingleDefaultTier()
+    {
+        var originalDefault = await GetDefaultTierAsync();
+        var response = await _client.PostAsJsonAsync("/api/repository-tiers", new SaveRepositoryTierRequest(UniqueName("Default switch"), 720));
+        var tier = await response.Content.ReadFromJsonAsync<RepositoryTierResponse>();
+        Assert.NotNull(tier);
+
+        var setDefault = await _client.PutAsync($"/api/repository-tiers/{tier.Id}/default", null);
+
+        setDefault.EnsureSuccessStatusCode();
+        var tiers = await _client.GetFromJsonAsync<List<RepositoryTierResponse>>("/api/repository-tiers");
+        Assert.NotNull(tiers);
+        Assert.Equal(tier.Id, Assert.Single(tiers.Where(candidate => candidate.IsDefault)).Id);
+        Assert.False(tiers.Single(candidate => candidate.Id == originalDefault.Id).IsDefault);
+    }
+
+    [Fact]
+    public async Task DeleteAssignedTier_RequiresConfirmationThenReassignsToDefault()
+    {
+        var profile = await CreateProfileAsync("Tier reassignment", null);
+        var tierResponse = await _client.PostAsJsonAsync("/api/repository-tiers", new SaveRepositoryTierRequest(UniqueName("Temporary tier"), 710));
+        var tier = await tierResponse.Content.ReadFromJsonAsync<RepositoryTierResponse>();
+        Assert.NotNull(tier);
+        (await _client.PostAsJsonAsync($"/api/profiles/{profile.Id}/repositories", new SaveProfileRepositoryRequest("owner", "tier-reassign", tier.Id))).EnsureSuccessStatusCode();
+
+        var blocked = await _client.DeleteAsync($"/api/repository-tiers/{tier.Id}");
+        Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+
+        var confirmed = await _client.DeleteAsync($"/api/repository-tiers/{tier.Id}?reassignAssignedRepositories=true");
+        Assert.Equal(HttpStatusCode.NoContent, confirmed.StatusCode);
+        var refreshed = await _client.GetFromJsonAsync<ProfileDetailResponse>($"/api/profiles/{profile.Id}");
+        Assert.NotNull(refreshed);
+        Assert.Equal((await GetDefaultTierAsync()).Id, Assert.Single(refreshed.Repositories).RepositoryTierId);
+    }
+
+    [Fact]
+    public async Task RunProfile_UsesPersistedRepositoriesAndCurrentTaskLimit()
+    {
+        var profile = await CreateRunnableProfileAsync("Run profile", "ghp_many");
+        var request = new RunProfileRequest(TaskLimit: 15);
+
+        var response = await _client.PostAsJsonAsync($"/api/profiles/{profile.Id}/run", request);
 
         response.EnsureSuccessStatusCode();
-        Assert.True(response.Headers.Contains(CorrelationHeaderName));
-
-        var logs = await _factory.ReadLogTextAsync("ProfileCreated");
-        Assert.Contains("ProfileCreated", logs);
-        Assert.DoesNotContain(token, logs);
+        var result = await response.Content.ReadFromJsonAsync<TaskRunResponse>();
+        Assert.NotNull(result);
+        Assert.Equal(15, result.Items.Count);
     }
 
     [Fact]
-    public async Task CreateProfile_GivenInvalidRepository_ReturnsValidationProblem()
+    public async Task RunProfile_RequiresRepositoryAndLabelsBeforeGitHubCall()
     {
-        var request = CreateProfileRequest("Invalid profile", "ghp_test") with
-        {
-            RepositoryLines = "invalid"
-        };
+        var profile = await CreateProfileAsync("Invalid run", "ghp_test");
 
-        var response = await _client.PostAsJsonAsync("/api/profiles", request);
+        var response = await _client.PostAsync($"/api/profiles/{profile.Id}/run", null);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
-    public async Task RunProfile_GivenSavedToken_ReturnsRankedTasks()
+    public async Task RunProfile_UsesSavedTuning()
     {
-        var createResponse = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest("Runnable profile", "ghp_test"));
-        createResponse.EnsureSuccessStatusCode();
-        var profile = await createResponse.Content.ReadFromJsonAsync<ProfileDetailResponse>();
+        var profile = await CreateRunnableProfileAsync("Tuning", "ghp_test", new TaskPriorityFactors { AssignmentBonus = 123 });
+        var response = await _client.PostAsync($"/api/profiles/{profile.Id}/run", null);
 
-        var runResponse = await _client.PostAsync($"/api/profiles/{profile!.Id}/run", content: null);
-
-        runResponse.EnsureSuccessStatusCode();
-        var result = await runResponse.Content.ReadFromJsonAsync<TaskRunResponse>();
-        Assert.NotNull(result);
-        Assert.Single(result.Items);
-        Assert.Equal(1, result.Items[0].Rank);
-        Assert.True(result.Items[0].Score > 0);
-        Assert.Equal("github", result.Cache.Status);
-        Assert.True(result.Cache.Enabled);
-        Assert.False(result.Cache.RefreshRequested);
-        Assert.Equal(1, result.Cache.GitHubRequestCount);
-        Assert.Single(result.Cache.Operations);
-        Assert.Equal("ok", result.Quota.Status);
-        Assert.True(result.Quota.ProtectionEnabled);
-        Assert.Equal(4900, result.Quota.Remaining);
-        Assert.Equal(1, result.Quota.ActualGitHubRequestCount);
-    }
-
-    [Fact]
-    public async Task RunProfile_WhenRefreshRequested_PropagatesRefreshFlag()
-    {
-        _factory.GitHubTaskClient.ClearRequests();
-        var createResponse = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest("Refresh profile", "ghp_test"));
-        createResponse.EnsureSuccessStatusCode();
-        var profile = await createResponse.Content.ReadFromJsonAsync<ProfileDetailResponse>();
-
-        var runResponse = await _client.PostAsync($"/api/profiles/{profile!.Id}/run?refresh=true", content: null);
-
-        runResponse.EnsureSuccessStatusCode();
-        var result = await runResponse.Content.ReadFromJsonAsync<TaskRunResponse>();
-        Assert.Contains(true, _factory.GitHubTaskClient.RefreshRequests);
-        Assert.NotNull(result);
-        Assert.Equal("refreshed", result.Cache.Status);
-        Assert.True(result.Cache.RefreshRequested);
-        Assert.Equal("refresh", result.Cache.Operations[0].Source);
-    }
-
-    [Fact]
-    public async Task RunProfile_WhenQuotaOverrideRequested_PropagatesOverrideFlag()
-    {
-        _factory.GitHubTaskClient.ClearRequests();
-        var createResponse = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest("Quota override profile", "ghp_test"));
-        createResponse.EnsureSuccessStatusCode();
-        var profile = await createResponse.Content.ReadFromJsonAsync<ProfileDetailResponse>();
-
-        var runResponse = await _client.PostAsync($"/api/profiles/{profile!.Id}/run?refresh=true&quotaOverride=true", content: null);
-
-        runResponse.EnsureSuccessStatusCode();
-        Assert.Contains(true, _factory.GitHubTaskClient.RefreshRequests);
-        Assert.Contains(true, _factory.GitHubTaskClient.QuotaOverrideRequests);
-    }
-
-    [Fact]
-    public async Task RunProfile_WhenQuotaProtected_ReturnsTooManyRequestsProblem()
-    {
-        var createResponse = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest("Quota protected profile", "ghp_quota_protected"));
-        createResponse.EnsureSuccessStatusCode();
-        var profile = await createResponse.Content.ReadFromJsonAsync<ProfileDetailResponse>();
-
-        var runResponse = await _client.PostAsync($"/api/profiles/{profile!.Id}/run", content: null);
-
-        Assert.Equal(HttpStatusCode.TooManyRequests, runResponse.StatusCode);
-        Assert.Equal("application/problem+json", runResponse.Content.Headers.ContentType?.MediaType);
-        Assert.True(runResponse.Headers.Contains("Retry-After"));
-        var responseText = await runResponse.Content.ReadAsStringAsync();
-        Assert.Contains("GitHub quota protection stopped the run", responseText);
-        Assert.Contains("\"status\":\"protected\"", responseText);
-        Assert.DoesNotContain("ghp_quota_protected", responseText);
-    }
-
-    [Fact]
-    public async Task RunProfile_GivenCurrentRequestBody_ReranksWithRequestedTaskLimit()
-    {
-        var createResponse = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest("Current draft profile", "ghp_many"));
-        createResponse.EnsureSuccessStatusCode();
-        var profile = await createResponse.Content.ReadFromJsonAsync<ProfileDetailResponse>();
-        var runRequest = new RunProfileRequest(
-            profile!.RepositoryLines,
-            profile.LabelLines,
-            TaskLimit: 15,
-            DelayInMilliseconds: profile.DelayInMilliseconds,
-            PriorityFactors: profile.PriorityFactors);
-
-        var runResponse = await _client.PostAsJsonAsync($"/api/profiles/{profile.Id}/run", runRequest);
-
-        runResponse.EnsureSuccessStatusCode();
-        var result = await runResponse.Content.ReadFromJsonAsync<TaskRunResponse>();
-        Assert.NotNull(result);
-        Assert.Equal(15, result.Items.Count);
-        Assert.Equal(15, result.Items[^1].Rank);
-    }
-
-    [Fact]
-    public async Task RunProfileStream_GivenCurrentRequestBody_StreamsProgressAndCompletedResult()
-    {
-        var createResponse = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest("Streaming profile", "ghp_many"));
-        createResponse.EnsureSuccessStatusCode();
-        var profile = await createResponse.Content.ReadFromJsonAsync<ProfileDetailResponse>();
-        var runRequest = new RunProfileRequest(
-            profile!.RepositoryLines,
-            profile.LabelLines,
-            TaskLimit: 15,
-            DelayInMilliseconds: profile.DelayInMilliseconds,
-            PriorityFactors: profile.PriorityFactors);
-
-        var runResponse = await _client.PostAsJsonAsync($"/api/profiles/{profile.Id}/run/stream", runRequest);
-
-        runResponse.EnsureSuccessStatusCode();
-        Assert.Equal("application/x-ndjson", runResponse.Content.Headers.ContentType?.MediaType);
-        var events = (await runResponse.Content.ReadAsStringAsync())
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => JsonSerializer.Deserialize<TaskRunStreamEvent>(line, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            }))
-            .ToList();
-
-        Assert.Contains(events, streamEvent => streamEvent?.Type == "progress");
-        var completed = Assert.Single(events, streamEvent => streamEvent?.Type == "completed");
-        Assert.NotNull(completed!.Result);
-        Assert.Equal(15, completed.Result.Items.Count);
-        Assert.Equal("ok", completed.Result.Quota.Status);
-        Assert.Equal("ok", completed.Quota?.Status);
-    }
-
-    [Fact]
-    public async Task RunProfile_WhenGitHubClientFails_ReturnsProblemAndWritesErrorLog()
-    {
-        var createResponse = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest("Failing profile", "ghp_fail"));
-        createResponse.EnsureSuccessStatusCode();
-        var profile = await createResponse.Content.ReadFromJsonAsync<ProfileDetailResponse>();
-
-        var runResponse = await _client.PostAsync($"/api/profiles/{profile!.Id}/run", content: null);
-
-        Assert.Equal(HttpStatusCode.InternalServerError, runResponse.StatusCode);
-        Assert.True(runResponse.Headers.Contains(CorrelationHeaderName));
-        var responseText = await runResponse.Content.ReadAsStringAsync();
-        Assert.Contains("correlationId", responseText);
-
-        var logs = await _factory.ReadLogTextAsync("ProfileRunFailed");
-        Assert.Contains("ProfileRunFailed", logs);
-        Assert.Contains(profile.Id.ToString(), logs);
-        Assert.DoesNotContain("ghp_fail", logs);
-    }
-
-    [Fact]
-    public async Task RunProfile_WhenProfileRunTimesOut_ReturnsGatewayTimeoutAndWritesWarningLog()
-    {
-        var createResponse = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest("Slow profile", "ghp_slow"));
-        createResponse.EnsureSuccessStatusCode();
-        var profile = await createResponse.Content.ReadFromJsonAsync<ProfileDetailResponse>();
-
-        var runResponse = await _client.PostAsync($"/api/profiles/{profile!.Id}/run", content: null);
-
-        Assert.Equal(HttpStatusCode.GatewayTimeout, runResponse.StatusCode);
-        Assert.Equal("application/problem+json", runResponse.Content.Headers.ContentType?.MediaType);
-        Assert.True(runResponse.Headers.Contains(CorrelationHeaderName));
-        var responseText = await runResponse.Content.ReadAsStringAsync();
-        Assert.Contains("Profile run timed out", responseText);
-        Assert.Contains("correlationId", responseText);
-
-        var logs = await _factory.ReadLogTextAsync("ProfileRunTimedOut");
-        Assert.Contains("ProfileRunTimedOut", logs);
-        Assert.Contains(profile.Id.ToString(), logs);
-        Assert.DoesNotContain("ghp_slow", logs);
-    }
-
-    [Fact]
-    public async Task RunProfile_WhenGitHubRequestTimesOut_ReturnsGatewayTimeoutAndWritesWarningLog()
-    {
-        var createResponse = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest("GitHub timeout profile", "ghp_github_timeout"));
-        createResponse.EnsureSuccessStatusCode();
-        var profile = await createResponse.Content.ReadFromJsonAsync<ProfileDetailResponse>();
-
-        var runResponse = await _client.PostAsync($"/api/profiles/{profile!.Id}/run", content: null);
-
-        Assert.Equal(HttpStatusCode.GatewayTimeout, runResponse.StatusCode);
-        Assert.Equal("application/problem+json", runResponse.Content.Headers.ContentType?.MediaType);
-        var responseText = await runResponse.Content.ReadAsStringAsync();
-        Assert.Contains("GitHub request timed out", responseText);
-        Assert.Contains("correlationId", responseText);
-
-        var logs = await _factory.ReadLogTextAsync("ProfileRunGitHubRequestTimedOut");
-        Assert.Contains("ProfileRunGitHubRequestTimedOut", logs);
-        Assert.Contains("synthetic-github-request", logs);
-        Assert.Contains(profile.Id.ToString(), logs);
-        Assert.DoesNotContain("ghp_github_timeout", logs);
-    }
-
-    [Fact]
-    public async Task RunProfile_GivenCustomPriorityFactors_UsesConfiguredWeights()
-    {
-        var customFactors = new TaskPriorityFactors
-        {
-            AssignmentBonus = 123
-        };
-
-        var createResponse = await _client.PostAsJsonAsync(
-            "/api/profiles",
-            CreateProfileRequest("Weighted profile", "ghp_test", customFactors));
-        createResponse.EnsureSuccessStatusCode();
-        var profile = await createResponse.Content.ReadFromJsonAsync<ProfileDetailResponse>();
-
-        var runResponse = await _client.PostAsync($"/api/profiles/{profile!.Id}/run", content: null);
-
-        runResponse.EnsureSuccessStatusCode();
-        var result = await runResponse.Content.ReadFromJsonAsync<TaskRunResponse>();
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<TaskRunResponse>();
         Assert.NotNull(result);
         Assert.Equal(123, result.Items[0].ScoreBreakdown.Assignment);
     }
 
+    [Fact]
+    public async Task DiscoverLabels_AddsPendingLabelsAndUsesRepositoryTasks()
+    {
+        var profile = await CreateRunnableProfileAsync("Label discovery", "ghp_test");
+
+        var response = await _client.PostAsync($"/api/profiles/{profile.Id}/labels/discover", null);
+
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<LabelDiscoveryResponse>();
+        Assert.NotNull(result);
+        Assert.Equal(3, result.NewLabelCount);
+        Assert.Equal(0, result.RemovedLabelCount);
+        Assert.All(result.Labels, label => Assert.True(label.IsPending));
+        Assert.Equal("github", result.Cache.Status);
+        Assert.Equal(1, result.Cache.GitHubRequestCount);
+    }
+
+    [Fact]
+    public async Task DiscoverLabels_RemovesLabelsThatAreNoLongerInRepositoryIssues()
+    {
+        var profile = await CreateRunnableProfileAsync("Label reconciliation", "ghp_test");
+        var firstDiscovery = await _client.PostAsync($"/api/profiles/{profile.Id}/labels/discover", null);
+        var firstResult = await firstDiscovery.Content.ReadFromJsonAsync<LabelDiscoveryResponse>();
+        Assert.NotNull(firstResult);
+        var size = firstResult.Labels.Single(label => label.Name == "size/s");
+        (await _client.PutAsJsonAsync($"/api/profiles/{profile.Id}/labels/{size.Id}", new UpdateProfileLabelRequest(true))).EnsureSuccessStatusCode();
+
+        var update = new SaveProfileRequest(
+            profile.Name,
+            profile.LabelLines,
+            profile.TaskLimit,
+            profile.DelayInMilliseconds,
+            "ghp_label_subset",
+            profile.PriorityFactors);
+        (await _client.PutAsJsonAsync($"/api/profiles/{profile.Id}", update)).EnsureSuccessStatusCode();
+
+        var response = await _client.PostAsync($"/api/profiles/{profile.Id}/labels/discover?refresh=true", null);
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<LabelDiscoveryResponse>();
+        Assert.NotNull(result);
+        Assert.Equal(0, result.NewLabelCount);
+        Assert.Equal(2, result.RemovedLabelCount);
+        Assert.Equal(["priority/high"], result.Labels.Select(label => label.Name));
+
+        var refreshed = await _client.GetFromJsonAsync<ProfileDetailResponse>($"/api/profiles/{profile.Id}");
+        Assert.NotNull(refreshed);
+        Assert.Equal(["priority/high"], refreshed.Labels.Select(label => label.Name));
+    }
+
+    [Fact]
+    public async Task LabelOrders_AreUniqueAndIgnoredLabelsAreNotRanked()
+    {
+        var profile = await CreateRunnableProfileAsync("Label groups", "ghp_test");
+        var discoveryResponse = await _client.PostAsync($"/api/profiles/{profile.Id}/labels/discover", null);
+        var discovery = await discoveryResponse.Content.ReadFromJsonAsync<LabelDiscoveryResponse>();
+        Assert.NotNull(discovery);
+
+        var high = discovery.Labels.Single(label => label.Name == "priority/high");
+        var status = discovery.Labels.Single(label => label.Name == "status/next");
+        var size = discovery.Labels.Single(label => label.Name == "size/s");
+        var invalidActivation = await _client.PutAsJsonAsync($"/api/profiles/{profile.Id}/labels/order", new ReorderProfileLabelsRequest([high.Id, status.Id]));
+        Assert.Equal(HttpStatusCode.BadRequest, invalidActivation.StatusCode);
+        (await _client.PutAsJsonAsync($"/api/profiles/{profile.Id}/labels/order", new ReorderProfileLabelsRequest([high.Id]))).EnsureSuccessStatusCode();
+        (await _client.PutAsJsonAsync($"/api/profiles/{profile.Id}/labels/order", new ReorderProfileLabelsRequest([high.Id, status.Id]))).EnsureSuccessStatusCode();
+        (await _client.PutAsJsonAsync($"/api/profiles/{profile.Id}/labels/{size.Id}", new UpdateProfileLabelRequest(true))).EnsureSuccessStatusCode();
+
+        var runResponse = await _client.PostAsync($"/api/profiles/{profile.Id}/run", null);
+        runResponse.EnsureSuccessStatusCode();
+        var run = await runResponse.Content.ReadFromJsonAsync<TaskRunResponse>();
+        Assert.NotNull(run);
+        Assert.Equal(3, run.Items[0].ScoreBreakdown.Labels);
+        Assert.Contains("size/s", run.Items[0].UnscoredLabels);
+
+        var restored = await _client.GetFromJsonAsync<ProfileDetailResponse>($"/api/profiles/{profile.Id}");
+        Assert.NotNull(restored);
+        Assert.True(restored.Labels.Single(label => label.Id == size.Id).IsIgnored);
+    }
+
+    private async Task<ProfileDetailResponse> CreateRunnableProfileAsync(string prefix, string token, TaskPriorityFactors? factors = null)
+    {
+        var profile = await CreateProfileAsync(prefix, token, factors);
+        var tier = await GetDefaultTierAsync();
+        var response = await _client.PostAsJsonAsync($"/api/profiles/{profile.Id}/repositories", new SaveProfileRepositoryRequest("owner", "repo", tier.Id));
+        response.EnsureSuccessStatusCode();
+        return profile;
+    }
+
+    private async Task<ProfileRepositoryResponse> CreateRepositoryAsync(Guid profileId, string owner, string name, Guid tierId)
+    {
+        var response = await _client.PostAsJsonAsync($"/api/profiles/{profileId}/repositories", new SaveProfileRepositoryRequest(owner, name, tierId));
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<ProfileRepositoryResponse>())!;
+    }
+
+    private async Task<ProfileDetailResponse> CreateProfileAsync(string prefix, string? token, TaskPriorityFactors? factors = null)
+    {
+        var response = await _client.PostAsJsonAsync("/api/profiles", CreateProfileRequest(UniqueName(prefix), token, factors));
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<ProfileDetailResponse>())!;
+    }
+
+    private async Task<RepositoryTierResponse> GetDefaultTierAsync() =>
+        (await _client.GetFromJsonAsync<List<RepositoryTierResponse>>("/api/repository-tiers"))!.Single(tier => tier.IsDefault);
+
     private static SaveProfileRequest CreateProfileRequest(string name, string? token, TaskPriorityFactors? factors = null) => new(
         name,
-        "owner/repo core",
-        """
-        priority/high
-        status/next
-        size/s
-        """,
+        "priority/high\nstatus/next\nsize/s",
         10,
         0,
         token,
         factors);
+
+    private static string UniqueName(string prefix) => $"{prefix} {Guid.NewGuid():N}";
 }

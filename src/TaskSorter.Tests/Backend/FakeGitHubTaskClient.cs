@@ -41,6 +41,24 @@ internal sealed class FakeGitHubTaskClient : IGitHubTaskClient
         }
     }
 
+    public Task<GitHubTaskFetchResult> GetRepositoryTasksAsync(
+        IReadOnlyList<Repository> repositories,
+        string githubToken,
+        int delayInMilliseconds,
+        TimeSpan requestTimeout,
+        bool refreshGitHubCache,
+        bool quotaOverride,
+        CancellationToken cancellationToken) =>
+        GetOpenTasksAsync(
+            repositories,
+            githubToken,
+            delayInMilliseconds,
+            requestTimeout,
+            refreshGitHubCache,
+            quotaOverride,
+            progressReporter: null,
+            cancellationToken);
+
     public async Task<GitHubTaskFetchResult> GetOpenTasksAsync(
         IReadOnlyList<Repository> repositories,
         string githubToken,
@@ -73,6 +91,9 @@ internal sealed class FakeGitHubTaskClient : IGitHubTaskClient
             return await SlowResponseAsync(cancellationToken);
 
         var taskCount = githubToken == "ghp_many" ? 20 : 1;
+        List<Label> labels = githubToken == "ghp_label_subset"
+            ? [new Label("priority/high")]
+            : [new Label("priority/high"), new Label("status/next"), new Label("size/s")];
         var tasks = Enumerable.Range(1, taskCount)
             .Select(index => new TaskData
             {
@@ -80,7 +101,7 @@ internal sealed class FakeGitHubTaskClient : IGitHubTaskClient
                 Title = index == 1 ? "Fix failing build" : $"Fix queued task {index}",
                 Type = TaskTypes.Issue,
                 Repository = new Repository("owner", "repo"),
-                Labels = [new Label("priority/high"), new Label("status/next"), new Label("size/s")],
+                Labels = labels,
                 Url = $"https://github.com/owner/repo/issues/{index}",
                 Assigned = true,
                 Locked = false,

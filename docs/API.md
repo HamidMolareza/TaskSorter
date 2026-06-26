@@ -1,55 +1,23 @@
 # API Reference
 
-TaskSorter exposes a JSON API from `TaskSorter.Backend`. In Docker Compose the frontend proxies `/api` and `/health` to the backend.
+TaskSorter exposes a JSON API from `TaskSorter.Backend`. Docker Compose proxies `/api` and `/health` through the frontend.
 
 ## Health
 
-`GET /health`
-
-Returns backend and database health.
+`GET /health` returns backend and database health.
 
 ## Profiles
 
-`GET /api/profiles`
+`GET /api/profiles` returns profile summaries. `GET /api/profiles/{id}` includes persisted label rows, tuning, and repository rows. GitHub tokens are never returned.
 
-Returns profile summaries: `id`, `name`, `taskLimit`, `delayInMilliseconds`, `hasGitHubToken`, and `updatedAt`.
-
-`GET /api/profiles/{id}`
-
-Returns editable profile data, including `priorityFactors`. The decrypted GitHub token is never returned.
-
-`POST /api/profiles`
-
-Creates a profile.
+`POST /api/profiles` and `PUT /api/profiles/{id}` use this body:
 
 ```json
 {
   "name": "Daily",
-  "repositoryLines": "owner/repo core",
-  "labelLines": "priority/high\nstatus/next",
   "taskLimit": 10,
   "delayInMilliseconds": 500,
   "priorityFactors": {
-    "repositoryTiers": {
-      "core": 500,
-      "active": 300,
-      "maintenance": 100,
-      "paused": -200,
-      "archive": -500
-    },
-    "status": {
-      "inProgress": 60,
-      "next": 50,
-      "waiting": -150,
-      "blocked": -200,
-      "default": 0
-    },
-    "size": {
-      "small": 30,
-      "medium": 15,
-      "large": -10,
-      "default": 0
-    },
     "assignmentBonus": 20,
     "lockPenalty": -100
   },
@@ -57,191 +25,63 @@ Creates a profile.
 }
 ```
 
-`PUT /api/profiles/{id}`
+The token changes only when `gitHubToken` is non-empty. Profiles may be created incomplete; runs validate repositories and token. `DELETE /api/profiles/{id}` deletes the profile, repository rows, and label rows.
 
-Updates a profile. The token is changed only when `gitHubToken` is non-empty.
+## Repository Tiers
 
-`DELETE /api/profiles/{id}`
+`GET /api/repository-tiers` returns global tiers with `id`, `name`, `score`, `isDefault`, and `assignedRepositoryCount`.
 
-Deletes a profile.
+`POST /api/repository-tiers` and `PUT /api/repository-tiers/{id}` accept:
 
-## Config Preview
+```json
+{ "name": "active", "score": 300 }
+```
 
-`POST /api/preview-config`
+Tier names are unique ignoring case. `PUT /api/repository-tiers/{id}/default` changes the single default tier. `DELETE /api/repository-tiers/{id}` returns `409` when assignments exist; repeat with `?reassignAssignedRepositories=true` after confirmation to reassign them to the default tier. The default tier cannot be deleted.
 
-Parses repository and label text without calling GitHub.
+## Profile Repositories
+
+`GET /api/profiles/{profileId}/repositories`, `POST /api/profiles/{profileId}/repositories`, `PUT /api/profiles/{profileId}/repositories/{id}`, and `DELETE /api/profiles/{profileId}/repositories/{id}` manage the profile's repository rows.
 
 ```json
 {
-  "repositoryLines": "owner/repo core",
-  "labelLines": "priority/high\nstatus/next",
-  "taskLimit": 10,
-  "delayInMilliseconds": 500,
-  "priorityFactors": {
-    "repositoryTiers": {
-      "core": 500,
-      "active": 300,
-      "maintenance": 100,
-      "paused": -200,
-      "archive": -500
-    },
-    "status": {
-      "inProgress": 60,
-      "next": 50,
-      "waiting": -150,
-      "blocked": -200,
-      "default": 0
-    },
-    "size": {
-      "small": 30,
-      "medium": 15,
-      "large": -10,
-      "default": 0
-    },
-    "assignmentBonus": 20,
-    "lockPenalty": -100
-  }
+  "owner": "owner",
+  "name": "repo",
+  "repositoryTierId": "00000000-0000-0000-0000-000000000000"
 }
 ```
 
-Returns normalized repositories, normalized labels, warnings, and validation errors. Repository preview scores use the supplied `priorityFactors.repositoryTiers` values.
+Repository names are unique within a profile. Responses include the selected tier, position score, calculated priority score, and validation state. `PUT /api/profiles/{profileId}/repositories/order` accepts `{ "repositoryIds": ["..."] }` to persist sorted rows.
+
+## Profile Labels
+
+`GET /api/profiles/{profileId}/labels` returns persisted label rows. `POST /api/profiles/{profileId}/labels/discover` collects distinct labels from configured repository issue lists. It uses persistent cache entries first, fetches only missing or expired targets, and returns cache and quota metadata. Add `?refresh=true` only when fresh GitHub label data is required. Discovery reconciles the saved rows with the collected labels: it preserves order and ignore state for labels still in use, adds new labels as pending, and removes rows that no longer occur in the configured repositories. The response includes `newLabelCount` and `removedLabelCount`.
+
+New labels have `isPending: true` until they are placed in the ranked list or become ignored. The ranked list has one unique position per label; higher rows have higher priority.
+
+`PUT /api/profiles/{profileId}/labels/{id}` accepts:
+
+```json
+{ "isIgnored": true }
+```
+
+`PUT /api/profiles/{profileId}/labels/order` accepts the complete ranked list as `{ "labelIds": ["...", "..."] }`. The list must retain every ranked label and may add one pending label at the intended position. Restored labels return to pending state until ranked again.
 
 ## Run Profile
 
-`POST /api/profiles/{id}/run`
+`POST /api/profiles/{id}/run` and `POST /api/profiles/{id}/run/stream` rank persisted repositories. The stream endpoint returns newline-delimited JSON progress events.
 
-Fetches GitHub issues and pull requests, scores them, applies the task limit, and returns ranked tasks. The saved profile supplies the encrypted GitHub token. The request body is optional; when present, it supplies the current editable run settings without saving them:
+An optional current-settings body can be supplied:
 
 ```json
 {
-  "repositoryLines": "owner/repo core",
-  "labelLines": "priority/high\nstatus/next",
   "taskLimit": 15,
   "delayInMilliseconds": 0,
   "priorityFactors": {
-    "repositoryTiers": {
-      "core": 500,
-      "active": 300,
-      "maintenance": 100,
-      "paused": -200,
-      "archive": -500
-    },
-    "status": {
-      "inProgress": 60,
-      "next": 50,
-      "waiting": -150,
-      "blocked": -200,
-      "default": 0
-    },
-    "size": {
-      "small": 30,
-      "medium": 15,
-      "large": -10,
-      "default": 0
-    },
     "assignmentBonus": 20,
     "lockPenalty": -100
   }
 }
 ```
 
-When the body is omitted, the saved profile settings are used.
-
-Task items include rank, GitHub URL, repository, project tier, labels, status, size, final score, score breakdown, and unscored labels.
-
-Priority factors are saved per profile and can be edited from the web panel. The complete editable factor list is repository tier scores (`core`, `active`, `maintenance`, `paused`, `archive`), status scores (`inProgress`, `next`, `waiting`, `blocked`, `default`), size scores (`small`, `medium`, `large`, `default`), `assignmentBonus`, and `lockPenalty`.
-
-Large profiles can take longer than normal CRUD requests because each run reads current-user issues and configured repository issues from GitHub. The backend returns `504 application/problem+json` when the configured profile-run timeout or GitHub request timeout is exceeded. Problem responses include the backend correlation id when one is available.
-
-Successful GitHub reads are cached in the backend for `GitHub:CacheDurationSeconds` seconds. The backend keeps a hot in-memory copy and persists cache entries in PostgreSQL until they expire, so backend container restarts can reuse recent cache entries. The cache stores normalized GitHub operation results, not final ranked slices. Changing `taskLimit`, label order, label weights, or repository order re-ranks the cached tasks with the current request settings. Changing repository targets reuses cached matching targets and fetches only missing or stale targets.
-
-TaskSorter also tracks GitHub REST API quota from response headers and, when a fresh GitHub read is needed and the saved snapshot is stale, from GitHub's `/rate_limit` endpoint. GitHub documents the quota headers as `x-ratelimit-limit`, `x-ratelimit-remaining`, `x-ratelimit-used`, `x-ratelimit-reset`, and `x-ratelimit-resource`; see [GitHub REST API rate limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
-
-Run responses include cache and quota metadata:
-
-```json
-{
-  "items": [],
-  "warnings": [],
-  "cache": {
-    "status": "cache",
-    "enabled": true,
-    "refreshRequested": false,
-    "durationSeconds": 300,
-    "hitCount": 12,
-    "gitHubRequestCount": 0,
-    "operationCount": 12,
-    "operations": [
-      {
-        "operation": "repository-issues",
-        "target": "owner/repo",
-        "source": "cache"
-      }
-    ]
-  },
-  "quota": {
-    "status": "ok",
-    "protectionEnabled": true,
-    "reserveRequests": 50,
-    "warningRemaining": 250,
-    "estimatedRequiredRequests": 12,
-    "actualGitHubRequestCount": 0,
-    "limit": 5000,
-    "remaining": 4920,
-    "used": 80,
-    "resetAt": "2026-06-25T12:00:00+00:00",
-    "resetInSeconds": 1800,
-    "source": "snapshot"
-  }
-}
-```
-
-`cache.status` can be `cache`, `github`, `mixed`, `refreshed`, or `disabled`. Operation `source` can be `cache`, `github`, `refresh`, or `disabled`.
-
-`quota.status` can be `unknown`, `ok`, `low`, `protected`, `exhausted`, or `secondary-limited`. `quota.source` can be `snapshot`, `headers`, `rate-limit-endpoint`, or `unavailable`. Cached runs can complete without contacting GitHub; in that case quota is the latest saved snapshot or `unknown`.
-
-`POST /api/profiles/{id}/run?refresh=true`
-
-Bypasses existing GitHub cache entries for this run and stores fresh successful GitHub responses. `refresh=1` is also accepted.
-
-`POST /api/profiles/{id}/run?refresh=true&quotaOverride=true`
-
-Allows a forced refresh even when the saved quota snapshot is low. Use this only for an explicit user-confirmed refresh. `quotaOverride=1` is also accepted.
-
-When quota protection blocks a normal run, the backend returns `429 application/problem+json`, sets `Retry-After` when a reset time is known, and includes a `quota` extension with the same quota shape shown above.
-
-`POST /api/profiles/{id}/run/stream?refresh=true`
-
-Runs the same profile request but streams newline-delimited JSON progress events with `Content-Type: application/x-ndjson`. The request body uses the same optional current-run shape as `/run`.
-
-Events use this shape:
-
-```json
-{
-  "type": "progress",
-  "phase": "github",
-  "message": "Loaded 12 task(s) for owner/repo from cache.",
-  "completedOperations": 3,
-  "totalOperations": 12,
-  "operation": "repository-issues",
-  "target": "owner/repo",
-  "source": "cache",
-  "itemCount": 12,
-  "quota": {
-    "status": "ok",
-    "protectionEnabled": true,
-    "reserveRequests": 50,
-    "warningRemaining": 250,
-    "estimatedRequiredRequests": 12,
-    "actualGitHubRequestCount": 0,
-    "limit": 5000,
-    "remaining": 4920,
-    "used": 80,
-    "resetAt": "2026-06-25T12:00:00+00:00",
-    "resetInSeconds": 1800,
-    "source": "snapshot"
-  }
-}
-```
-
-`type` can be `started`, `progress`, `completed`, or `failed`. The `completed` event includes the normal run response in `result`.
+`?refresh=true` bypasses GitHub cache entries for the run and updates them. `?quotaOverride=true` is accepted only for explicit, user-confirmed refreshes when quota is low. Successful responses include ranked items, warnings, cache metadata, and GitHub quota metadata. The cache stores normalized GitHub reads, not final ranked slices, so current settings can re-rank cached items without new GitHub requests.
