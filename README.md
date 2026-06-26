@@ -92,13 +92,15 @@ Useful backend settings:
 - `GitHub:QuotaWarningRemaining`: warning threshold shown in the UI, default `250`.
 - `GitHub:QuotaSnapshotTtlSeconds`: how long a saved quota snapshot is trusted before rechecking GitHub, default `60`.
 
-Tests:
+Validation:
 
 ```bash
-dotnet test src/TaskSorter.slnx -p:NuGetAudit=false
+dotnet test src/TaskSorter.Tests/TaskSorter.Tests.csproj -p:NuGetAudit=false
 npm run test --prefix src/TaskSorter.Frontend
 npm run build --prefix src/TaskSorter.Frontend
 ```
+
+PR coverage runs the same test project with coverlet collector and excludes EF migrations plus generated `obj` sources from the coverage denominator. Keep workflow paths pointed at concrete projects under `src/`; this repository does not keep a solution file at the repo root.
 
 ## Documentation
 
@@ -107,6 +109,7 @@ npm run build --prefix src/TaskSorter.Frontend
 - [FAQ](docs/FAQ.md)
 - [Personal Project Workflow](docs/PERSONAL_PROJECT_WORKFLOW.md)
 - [Goals](docs/GOALS.md)
+- [Agent instructions](AGENTS.md)
 
 ## Security
 
