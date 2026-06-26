@@ -28,7 +28,7 @@ jobs:
 
       # Step to manage version tags: delete existing tags, create new tags for major and minor versions, and push them to the remote repository
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: tag major and minor versions
         if: ${{ steps.release.outputs.release_created }}
