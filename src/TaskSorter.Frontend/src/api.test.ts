@@ -9,19 +9,6 @@ const defaultPriorityFactors = {
     paused: -200,
     archive: -500,
   },
-  status: {
-    inProgress: 60,
-    next: 50,
-    waiting: -150,
-    blocked: -200,
-    default: 0,
-  },
-  size: {
-    small: 30,
-    medium: 15,
-    large: -10,
-    default: 0,
-  },
   assignmentBonus: 20,
   lockPenalty: -100,
 }

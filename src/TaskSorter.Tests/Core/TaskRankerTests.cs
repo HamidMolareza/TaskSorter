@@ -32,11 +32,9 @@ public sealed class TaskRankerTests
             10);
 
         var rankedTask = Assert.Single(result);
-        Assert.Equal(611, rankedTask.Value);
+        Assert.Equal(531, rankedTask.Value);
         Assert.Equal(502, rankedTask.RepositoryScore);
         Assert.Equal(9, rankedTask.LabelScore);
-        Assert.Equal(50, rankedTask.StatusScore);
-        Assert.Equal(30, rankedTask.SizeScore);
         Assert.Equal(20, rankedTask.AssignmentScore);
         Assert.Equal("core", rankedTask.ProjectTier);
         Assert.Single(rankedTask.UnscoredLabels);
@@ -83,8 +81,53 @@ public sealed class TaskRankerTests
             new TaskPriorityFactors { AssignmentBonus = 99 });
 
         var rankedTask = Assert.Single(result);
-        Assert.Equal(690, rankedTask.Value);
+        Assert.Equal(610, rankedTask.Value);
         Assert.Equal(99, rankedTask.AssignmentScore);
+    }
+
+    [Fact]
+    public void Rank_GivenStatusAndSizeLabels_UsesOnlyConfiguredLabelPriority()
+    {
+        var task = CreateTask(
+            new Repository("owner", "repo"),
+            [
+                new Label("status/next"),
+                new Label("size/s")
+            ]);
+
+        var ranker = new TaskRanker();
+        var result = ranker.Rank(
+            [task],
+            [],
+            [
+                new Label("status/next", 7),
+                new Label("size/s", 2)
+            ],
+            10);
+
+        var rankedTask = Assert.Single(result);
+        Assert.Equal(9, rankedTask.Value);
+        Assert.Equal(9, rankedTask.LabelScore);
+        Assert.Equal(0, rankedTask.RepositoryScore);
+        Assert.Equal(0, rankedTask.AssignmentScore);
+        Assert.Equal(0, rankedTask.LockScore);
+    }
+
+    [Fact]
+    public void TaskPriorityFactors_FromJson_IgnoresLegacyStatusAndSizeFields()
+    {
+        var factors = TaskPriorityFactors.FromJson(
+            """
+            {
+              "status": { "next": 99 },
+              "size": { "small": 88 },
+              "assignmentBonus": 44,
+              "lockPenalty": -55
+            }
+            """);
+
+        Assert.Equal(44, factors.AssignmentBonus);
+        Assert.Equal(-55, factors.LockPenalty);
     }
 
     private static TaskData CreateTask(Repository repository, List<Label> labels, bool assigned = false) =>

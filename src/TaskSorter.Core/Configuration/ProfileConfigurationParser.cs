@@ -22,40 +22,23 @@ public sealed class ProfileConfigurationParser
         if (configuration.DelayInMilliseconds < 0)
             errors.Add(new ValidationIssue("delayInMilliseconds", "Delay must be 0 or greater."));
 
-        if (repositoryLines.Count == 0)
+        if ((configuration.ConfiguredRepositories?.Count ?? repositoryLines.Count) == 0)
             errors.Add(new ValidationIssue("repositoryLines", "At least one repository is required."));
 
-        if (labelLines.Count == 0)
+        if (configuration.ConfiguredLabels is null && labelLines.Count == 0)
             errors.Add(new ValidationIssue("labelLines", "At least one label is required."));
 
-        var repositories = new List<Repository>();
-        var maximumRepositoryValue = repositoryLines.Count + 1;
-        for (var i = 0; i < repositoryLines.Count; i++)
-        {
-            var repository = Repository.Parse(repositoryLines[i], maximumRepositoryValue - i);
-            if (repository is null)
-            {
-                errors.Add(new ValidationIssue(
-                    $"repositoryLines[{i}]",
-                    $"Repository line is invalid. Use 'owner/repo' or 'owner/repo tier'. Valid tiers: {ProjectTier.ValidNames}."));
-                continue;
-            }
-
-            repositories.Add(repository);
-        }
+        var repositories = configuration.ConfiguredRepositories?.ToList() ?? ParseRepositories(repositoryLines, errors);
 
         var duplicateRepositories = repositories
             .GroupBy(repository => repository.ToString(), StringComparer.OrdinalIgnoreCase)
             .Where(group => group.Count() > 1)
             .Select(group => group.Key)
             .ToList();
-        if (duplicateRepositories.Count > 0)
-            warnings.Add($"Duplicate repositories ignored by GitHub task de-duplication: {string.Join(", ", duplicateRepositories)}.");
+        foreach (var duplicateRepository in duplicateRepositories)
+            errors.Add(new ValidationIssue("repositories", $"Repository {duplicateRepository} is configured more than once."));
 
-        var maximumLabelValue = labelLines.Count + 1;
-        var labels = labelLines
-            .Select((line, index) => new Label(line, maximumLabelValue - index))
-            .ToList();
+        var labels = configuration.ConfiguredLabels?.ToList() ?? ParseLabels(labelLines);
 
         return new ConfigPreview(repositories, labels, warnings, errors);
     }
@@ -84,5 +67,36 @@ public sealed class ProfileConfigurationParser
             .ReplaceLineEndings("\n")
             .Split('\n', StringSplitOptions.TrimEntries)
             .Where(line => !string.IsNullOrWhiteSpace(line));
+    }
+
+    private static List<Repository> ParseRepositories(
+        IReadOnlyList<string> repositoryLines,
+        ICollection<ValidationIssue> errors)
+    {
+        var repositories = new List<Repository>();
+        var maximumRepositoryValue = repositoryLines.Count + 1;
+        for (var i = 0; i < repositoryLines.Count; i++)
+        {
+            var repository = Repository.Parse(repositoryLines[i], maximumRepositoryValue - i);
+            if (repository is null)
+            {
+                errors.Add(new ValidationIssue(
+                    $"repositoryLines[{i}]",
+                    $"Repository line is invalid. Use 'owner/repo' or 'owner/repo tier'. Valid legacy tiers: {ProjectTier.ValidNames}."));
+                continue;
+            }
+
+            repositories.Add(repository);
+        }
+
+        return repositories;
+    }
+
+    private static List<Label> ParseLabels(IReadOnlyList<string> labelLines)
+    {
+        var maximumLabelValue = labelLines.Count + 1;
+        return labelLines
+            .Select((line, index) => new Label(line, maximumLabelValue - index))
+            .ToList();
     }
 }

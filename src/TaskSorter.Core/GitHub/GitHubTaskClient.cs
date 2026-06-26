@@ -17,6 +17,72 @@ public sealed class GitHubTaskClient(
     GitHubQuotaService gitHubQuotaService,
     ILogger<GitHubTaskClient> logger) : IGitHubTaskClient
 {
+    public async Task<GitHubTaskFetchResult> GetRepositoryTasksAsync(
+        IReadOnlyList<Repository> repositories,
+        string githubToken,
+        int delayInMilliseconds,
+        TimeSpan requestTimeout,
+        bool refreshGitHubCache,
+        bool quotaOverride,
+        CancellationToken cancellationToken)
+    {
+        if (requestTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(requestTimeout), "GitHub request timeout must be greater than zero.");
+
+        var client = new GitHubClient(new ProductHeaderValue(AppDefaults.AppName))
+        {
+            Credentials = new Credentials(githubToken)
+        };
+        var tokenFingerprint = CreateTokenFingerprint(githubToken);
+        var cacheOperations = new List<GitHubCacheOperation>();
+        var quotaState = new GitHubQuotaRunState(
+            tokenFingerprint,
+            repositories.Count,
+            quotaOverride,
+            await gitHubQuotaService.GetCachedSummaryAsync(tokenFingerprint, repositories.Count, 0, cancellationToken));
+        var tasks = new List<TaskData>();
+
+        logger.LogInformation(
+            "GitHubRepositoryLabelDiscoveryStarted for {RepositoryCount} repository target(s), cache refresh {RefreshGitHubCache}.",
+            repositories.Count,
+            refreshGitHubCache);
+
+        foreach (var repository in repositories)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var repositoryTasks = await FetchRepositoryTasksAsync(
+                client,
+                tokenFingerprint,
+                repository,
+                requestTimeout,
+                refreshGitHubCache,
+                quotaState,
+                cancellationToken);
+            cacheOperations.Add(ToCacheOperation(
+                "repository-issues",
+                $"{repository.Owner}/{repository.Name}",
+                repositoryTasks,
+                refreshGitHubCache));
+            tasks.AddRange(repositoryTasks.Value);
+            await DelayAfterSourceFetchAsync(repositoryTasks, delayInMilliseconds, cancellationToken);
+        }
+
+        var deduplicatedTasks = tasks
+            .DistinctBy(task => task.Id)
+            .DistinctBy(task => task.Url)
+            .ToList();
+        logger.LogInformation(
+            "GitHubRepositoryLabelDiscoveryCompleted with {FetchedTaskCount} task(s), {DistinctTaskCount} distinct task(s), and {GitHubRequestCount} GitHub request(s).",
+            tasks.Count,
+            deduplicatedTasks.Count,
+            quotaState.ActualGitHubRequestCount);
+
+        return new GitHubTaskFetchResult(
+            deduplicatedTasks,
+            BuildCacheSummary(refreshGitHubCache, cacheOperations),
+            quotaState.Summary.WithActualGitHubRequestCount(quotaState.ActualGitHubRequestCount));
+    }
+
     public async Task<GitHubTaskFetchResult> GetOpenTasksAsync(
         IReadOnlyList<Repository> repositories,
         string githubToken,
