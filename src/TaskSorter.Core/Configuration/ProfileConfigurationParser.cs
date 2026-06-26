@@ -71,6 +71,7 @@ public sealed class ProfileConfigurationParser
             preview.Labels,
             configuration.TaskLimit,
             configuration.DelayInMilliseconds,
+            configuration.EffectivePriorityFactors,
             preview.Warnings);
     }
 

@@ -10,6 +10,7 @@ public sealed class TaskProfile
     public required string LabelLines { get; set; }
     public int TaskLimit { get; set; }
     public int DelayInMilliseconds { get; set; }
+    public string? PriorityFactorsJson { get; set; }
     public string EncryptedGitHubToken { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
@@ -19,5 +20,6 @@ public sealed class TaskProfile
         RepositoryLines,
         LabelLines,
         TaskLimit,
-        DelayInMilliseconds);
+        DelayInMilliseconds,
+        TaskPriorityFactors.FromJson(PriorityFactorsJson));
 }

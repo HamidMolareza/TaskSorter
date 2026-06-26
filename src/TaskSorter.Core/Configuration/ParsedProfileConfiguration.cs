@@ -7,4 +7,5 @@ public sealed record ParsedProfileConfiguration(
     IReadOnlyList<Label> Labels,
     int TaskLimit,
     int DelayInMilliseconds,
+    TaskPriorityFactors PriorityFactors,
     IReadOnlyList<string> Warnings);

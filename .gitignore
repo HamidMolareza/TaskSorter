@@ -9,6 +9,8 @@ node_modules
 package-lock.json
 !src/TaskSorter.Frontend/package-lock.json
 *.DotSettings.user
+logs/
 outputs/
 src/outputs/
 src/TaskSorter.Frontend/dist/
+*.tsbuildinfo
