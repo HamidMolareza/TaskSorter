@@ -70,7 +70,7 @@ jobs:
 
       - name: Build and push Docker image
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ inputs.DOCKER_CONTEXT_PATH }}
           push: true
