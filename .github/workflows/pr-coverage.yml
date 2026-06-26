@@ -19,16 +19,16 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8
+          dotnet-version: 10
 
       - name: Restore and Build
         run: |
-          dotnet restore
-          dotnet build --no-restore
+          dotnet restore src/TaskSorter.Tests/TaskSorter.Tests.csproj -p:NuGetAudit=false
+          dotnet build src/TaskSorter.Tests/TaskSorter.Tests.csproj --no-restore -p:NuGetAudit=false
       
       # Add coverlet.collector nuget package to test project - 'dotnet add <TestProject.cspoj> package coverlet
       - name: Run Tests
-        run: dotnet test --no-build --verbosity normal --collect:"XPlat Code Coverage" --logger trx --results-directory coverage
+        run: dotnet test src/TaskSorter.Tests/TaskSorter.Tests.csproj --no-build --verbosity normal --collect:"XPlat Code Coverage" --logger trx --results-directory coverage -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByFile="**/Migrations/*.cs,**/obj/**/*.cs"
 
       - name: Code Coverage Summary Report
         uses: irongut/CodeCoverageSummary@v1.3.0

@@ -99,7 +99,7 @@ public sealed class ProfileApiTests(TaskSorterWebApplicationFactory factory) : I
         setDefault.EnsureSuccessStatusCode();
         var tiers = await _client.GetFromJsonAsync<List<RepositoryTierResponse>>("/api/repository-tiers");
         Assert.NotNull(tiers);
-        Assert.Equal(tier.Id, Assert.Single(tiers.Where(candidate => candidate.IsDefault)).Id);
+        Assert.Equal(tier.Id, Assert.Single(tiers, candidate => candidate.IsDefault).Id);
         Assert.False(tiers.Single(candidate => candidate.Id == originalDefault.Id).IsDefault);
     }
 
