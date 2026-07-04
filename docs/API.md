@@ -29,19 +29,37 @@ The token changes only when `gitHubToken` is non-empty. Profiles may be created 
 
 ## Repository Tiers
 
-`GET /api/repository-tiers` returns global tiers with `id`, `name`, `score`, `isDefault`, and `assignedRepositoryCount`.
+`GET /api/repository-tiers` returns global tiers with `id`, `name`, `score`, `isDefault`, `assignedRepositoryCount`, `rowVersion`, and `updatedAt`.
 
-`POST /api/repository-tiers` and `PUT /api/repository-tiers/{id}` accept:
+`POST /api/repository-tiers` accepts:
 
 ```json
 { "name": "active", "score": 300 }
 ```
 
-Tier names are unique ignoring case. `PUT /api/repository-tiers/{id}/default` changes the single default tier. `DELETE /api/repository-tiers/{id}` returns `409` when assignments exist; repeat with `?reassignAssignedRepositories=true` after confirmation to reassign them to the default tier. The default tier cannot be deleted.
+`PUT /api/repository-tiers/{id}` accepts the same shape plus the latest `rowVersion`:
+
+```json
+{ "name": "active", "score": 300, "rowVersion": 1 }
+```
+
+Tier names are unique ignoring case. Stale tier updates return `409` with `latestTier`. `PUT /api/repository-tiers/{id}/default` changes the single default tier. `DELETE /api/repository-tiers/{id}` returns `409` when assignments exist; repeat with `?reassignAssignedRepositories=true` after confirmation to reassign them to the default tier. The default tier cannot be deleted.
 
 ## Profile Repositories
 
 `GET /api/profiles/{profileId}/repositories`, `POST /api/profiles/{profileId}/repositories`, `PUT /api/profiles/{profileId}/repositories/{id}`, and `DELETE /api/profiles/{profileId}/repositories/{id}` manage the profile's repository rows.
+
+Create body:
+
+```json
+{
+  "owner": "owner",
+  "name": "repo",
+  "repositoryTierId": "00000000-0000-0000-0000-000000000000"
+}
+```
+
+`repositoryTierId` may be omitted on create to use the current default tier. Update body:
 
 ```json
 {
@@ -66,6 +84,18 @@ Ratings must be between `1` and `5`. New repository-factor pairs default to rati
 
 `POST /api/profiles/{profileId}/repository-priority-factors`, `PUT /api/profiles/{profileId}/repository-priority-factors/{factorId}`, `DELETE /api/profiles/{profileId}/repository-priority-factors/{factorId}`, and `PUT /api/profiles/{profileId}/repository-priority-factors/order` manage profile-specific repository factors.
 
+Create body:
+
+```json
+{
+  "name": "Urgency",
+  "description": "How soon does this repository need attention?",
+  "weight": 8
+}
+```
+
+Update body:
+
 ```json
 {
   "name": "Urgency",
@@ -75,7 +105,7 @@ Ratings must be between `1` and `5`. New repository-factor pairs default to rati
 }
 ```
 
-Factor names are unique within a profile, names are limited to 80 characters, descriptions to 500 characters, and weights to `-1000..1000`. Reorder accepts `{ "factorIds": ["..."] }`.
+Responses include `id`, `name`, `description`, `weight`, `sortOrder`, `rowVersion`, and `updatedAt`. Factor names are unique within a profile, names are limited to 80 characters, descriptions to 500 characters, and weights to `-1000..1000`. Factor updates require `rowVersion`; stale updates return `409` with the latest profile. Reorder accepts `{ "factorIds": ["..."] }`.
 
 ## Profile Labels
 

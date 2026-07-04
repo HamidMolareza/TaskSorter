@@ -34,19 +34,19 @@ size/l
 
 TaskSorter also recognizes older TaskSorter labels such as `priority-high`, `scope-bug`, and `status-in-progress`.
 
-## Project Tiers
+## Repository Tiers
 
-Repository profile text supports optional project tiers:
+TaskSorter stores repository tiers as global database records. Use the Scoring tab to maintain the tier catalog and choose the default tier. Use the Repositories tab to assign one tier to each repository:
 
 ```text
-HamidMolareza/TaskSorter core
-HamidMolareza/SomeActiveProject active
-HamidMolareza/OldProject maintenance
-HamidMolareza/PausedIdea paused
-HamidMolareza/ArchivedIdea archive
+HamidMolareza/TaskSorter -> core
+HamidMolareza/SomeActiveProject -> active
+HamidMolareza/OldProject -> maintenance
+HamidMolareza/PausedIdea -> paused
+HamidMolareza/ArchivedIdea -> archive
 ```
 
-Repositories without a tier default to `active`.
+New repositories use the current default tier when no tier is selected. The seeded default is `active`, but it can be changed in the Scoring tab.
 
 ## Daily Routine
 

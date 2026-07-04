@@ -58,7 +58,11 @@ The run button waits for GitHub reads across the whole profile. Large profiles, 
 
 Yes, if the saved GitHub token has read access to those repositories.
 
-### 15. How do I run everything locally?
+### 15. Does TaskSorter support dark mode?
+
+Yes. Use the theme button in the header to choose Light, Dark, or System. The choice is saved in browser storage and System follows the operating system color-scheme preference.
+
+### 16. How do I run everything locally?
 
 Use Docker Compose:
 
