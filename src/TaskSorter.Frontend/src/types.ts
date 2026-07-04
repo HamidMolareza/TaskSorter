@@ -26,9 +26,27 @@ export type ProfileRepository = {
   repositoryTierName: string
   repositoryTierScore: number
   sortOrder: number
-  positionScore: number
-  priorityScore: number
+  rowVersion: number
+  factorScore: number
+  score: number
+  ratings: RepositoryFactorRating[]
   validation: RepositoryValidationIssue[]
+}
+
+export type RepositoryPriorityFactor = {
+  id: string
+  name: string
+  description: string
+  weight: number
+  sortOrder: number
+  rowVersion: number
+  updatedAt: string
+}
+
+export type RepositoryFactorRating = {
+  repositoryPriorityFactorId: string
+  rating: number
+  rowVersion: number
 }
 
 export type RepositoryTier = {
@@ -37,6 +55,7 @@ export type RepositoryTier = {
   score: number
   isDefault: boolean
   assignedRepositoryCount: number
+  rowVersion: number
   updatedAt: string
 }
 
@@ -44,6 +63,7 @@ export type ProfileDetail = ProfileSummary & {
   labelLines: string
   priorityFactors: TaskPriorityFactors
   createdAt: string
+  repositoryPriorityFactors: RepositoryPriorityFactor[]
   repositories: ProfileRepository[]
   labels: ProfileLabel[]
 }
@@ -73,18 +93,21 @@ export type ProfileDraft = {
   taskLimit: number
   delayInMilliseconds: number
   priorityFactors: TaskPriorityFactors
+  repositoryPriorityFactors: RepositoryPriorityFactor[]
   repositories: ProfileRepository[]
   labels: ProfileLabel[]
 }
 
-export type SaveProfileRequest = Omit<ProfileDraft, 'id' | 'repositories' | 'labels'> & { gitHubToken?: string }
+export type SaveProfileRequest = Omit<ProfileDraft, 'id' | 'repositories' | 'repositoryPriorityFactors' | 'labels'> & { gitHubToken?: string }
 export type RunProfileRequest = Pick<ProfileDraft, 'labelLines' | 'taskLimit' | 'delayInMilliseconds' | 'priorityFactors'> & {
   repositoryLines?: string
 }
-export type SaveRepositoryTierRequest = { name: string; score: number }
+export type SaveRepositoryTierRequest = { name: string; score: number; rowVersion?: number }
 export type SaveProfileRepositoryRequest = { owner: string; name: string; repositoryTierId?: string }
-export type UpdateProfileRepositoryRequest = { owner: string; name: string; repositoryTierId: string }
+export type UpdateProfileRepositoryRequest = { owner: string; name: string; repositoryTierId: string; rowVersion: number }
 export type UpdateProfileLabelRequest = { isIgnored: boolean }
+export type SaveRepositoryPriorityFactorRequest = { name: string; description: string; weight: number; rowVersion?: number }
+export type UpdateRepositoryFactorRatingRequest = { rating: number; rowVersion: number }
 
 export type ScoreBreakdown = { repository: number; labels: number; assignment: number; lock: number }
 export type TaskItem = {

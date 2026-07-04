@@ -8,7 +8,7 @@ TaskSorter exposes a JSON API from `TaskSorter.Backend`. Docker Compose proxies 
 
 ## Profiles
 
-`GET /api/profiles` returns profile summaries. `GET /api/profiles/{id}` includes persisted label rows, tuning, and repository rows. GitHub tokens are never returned.
+`GET /api/profiles` returns profile summaries. `GET /api/profiles/{id}` includes persisted label rows, tuning, repository factor rows, and repository rows. GitHub tokens are never returned.
 
 `POST /api/profiles` and `PUT /api/profiles/{id}` use this body:
 
@@ -25,7 +25,7 @@ TaskSorter exposes a JSON API from `TaskSorter.Backend`. Docker Compose proxies 
 }
 ```
 
-The token changes only when `gitHubToken` is non-empty. Profiles may be created incomplete; runs validate repositories and token. `DELETE /api/profiles/{id}` deletes the profile, repository rows, and label rows.
+The token changes only when `gitHubToken` is non-empty. Profiles may be created incomplete; runs validate repositories and token. `DELETE /api/profiles/{id}` deletes the profile, repository factor rows, repository rows, ratings, and label rows.
 
 ## Repository Tiers
 
@@ -47,11 +47,35 @@ Tier names are unique ignoring case. `PUT /api/repository-tiers/{id}/default` ch
 {
   "owner": "owner",
   "name": "repo",
-  "repositoryTierId": "00000000-0000-0000-0000-000000000000"
+  "repositoryTierId": "00000000-0000-0000-0000-000000000000",
+  "rowVersion": 1
 }
 ```
 
-Repository names are unique within a profile. Responses include the selected tier, position score, calculated priority score, and validation state. `PUT /api/profiles/{profileId}/repositories/order` accepts `{ "repositoryIds": ["..."] }` to persist sorted rows.
+Repository names are unique within a profile. Responses include the selected tier, factor score, calculated score, row version, ratings, and validation state. `rowVersion` is required for updates; stale updates return `409` with the latest profile.
+
+`PUT /api/profiles/{profileId}/repositories/{repositoryId}/factor-ratings/{factorId}` accepts:
+
+```json
+{ "rating": 5, "rowVersion": 1 }
+```
+
+Ratings must be between `1` and `5`. New repository-factor pairs default to rating `1`.
+
+## Repository Priority Factors
+
+`POST /api/profiles/{profileId}/repository-priority-factors`, `PUT /api/profiles/{profileId}/repository-priority-factors/{factorId}`, `DELETE /api/profiles/{profileId}/repository-priority-factors/{factorId}`, and `PUT /api/profiles/{profileId}/repository-priority-factors/order` manage profile-specific repository factors.
+
+```json
+{
+  "name": "Urgency",
+  "description": "How soon does this repository need attention?",
+  "weight": 8,
+  "rowVersion": 1
+}
+```
+
+Factor names are unique within a profile, names are limited to 80 characters, descriptions to 500 characters, and weights to `-1000..1000`. Reorder accepts `{ "factorIds": ["..."] }`.
 
 ## Profile Labels
 

@@ -2,36 +2,75 @@ import type {
   ProfileDetail, ProfileSummary, RunProfileRequest, SaveProfileRequest, SaveProfileRepositoryRequest,
   SaveRepositoryTierRequest, TaskRunProgressEvent, TaskRunQuota, TaskRunResponse, RepositoryTier,
   ProfileRepository, UpdateProfileRepositoryRequest, LabelDiscovery, ProfileLabel,
-  UpdateProfileLabelRequest,
+  UpdateProfileLabelRequest, RepositoryPriorityFactor, SaveRepositoryPriorityFactorRequest,
+  RepositoryFactorRating, UpdateRepositoryFactorRatingRequest,
 } from './types'
 
-type ProblemDetails = { title?: string; detail?: string; status?: number; errors?: Record<string, string[]>; quota?: TaskRunQuota }
+type ProblemDetails = {
+  title?: string
+  detail?: string
+  status?: number
+  errors?: Record<string, string[]>
+  quota?: TaskRunQuota
+  traceId?: string
+  correlationId?: string
+  message?: string
+}
+
+export class ApiRequestError extends Error {
+  constructor(message: string, readonly status: number, readonly body: unknown) {
+    super(message)
+  }
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, { headers: { 'Content-Type': 'application/json', ...init?.headers }, ...init })
-  if (!response.ok)
-    throw new Error(await readErrorMessage(response))
+  if (!response.ok) {
+    const { message, body } = await readError(response)
+    throw new ApiRequestError(message, response.status, body)
+  }
   return response.status === 204 ? undefined as T : response.json() as Promise<T>
 }
 
-async function readErrorMessage(response: Response): Promise<string> {
+async function readError(response: Response): Promise<{ message: string; body: unknown }> {
   const fallback = `${response.status} ${response.statusText || 'Request failed'}`
   const body = (await response.text()).trim()
   if (body.startsWith('<'))
-    return response.status === 504 ? 'Request timed out while running the profile.' : `${fallback}. The server returned an HTML error page.`
+    return { message: response.status === 504 ? 'Request timed out while running the profile.' : `${fallback}. The server returned an HTML error page.`, body }
   try {
     const problem = JSON.parse(body) as ProblemDetails
-    const validation = problem.errors ? Object.values(problem.errors).flat().join(' ') : ''
-    return [problem.title, problem.detail, validation].filter(Boolean).join(' ') || fallback
+    const validation = validationMessages(problem).join(' ')
+    const title = validation && problem.title === 'One or more validation errors occurred.' ? '' : problem.title
+    const trace = problem.correlationId || problem.traceId
+    const message = [problem.message, title, problem.detail, validation].filter(Boolean).join(' ') || fallback
+    const traceSuffix = trace ? ` Reference: ${trace}.` : ''
+    return { message: `${message}${traceSuffix}`, body: problem }
   } catch {
-    return body || fallback
+    return { message: body || fallback, body }
   }
+}
+
+function validationMessages(problem: ProblemDetails) {
+  return problem.errors ? Object.values(problem.errors).flat().filter(Boolean) : []
+}
+
+export function validationErrorsOf(reason: unknown): Record<string, string[]> {
+  if (!(reason instanceof ApiRequestError) || typeof reason.body !== 'object' || reason.body === null)
+    return {}
+  const errors = (reason.body as ProblemDetails).errors
+  return errors && typeof errors === 'object' ? errors : {}
+}
+
+export function validationMessagesOf(reason: unknown) {
+  return Object.values(validationErrorsOf(reason)).flat().filter(Boolean)
 }
 
 async function streamRun(path: string, body: RunProfileRequest, onEvent: (event: TaskRunProgressEvent) => void) {
   const response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-  if (!response.ok)
-    throw new Error(await readErrorMessage(response))
+  if (!response.ok) {
+    const { message, body: errorBody } = await readError(response)
+    throw new ApiRequestError(message, response.status, errorBody)
+  }
   if (!response.body)
     throw new Error('The server did not return a progress stream.')
   const reader = response.body.getReader()
@@ -79,7 +118,12 @@ export const api = {
   createProfileRepository: (profileId: string, body: SaveProfileRepositoryRequest) => request<ProfileRepository>(`/api/profiles/${profileId}/repositories`, { method: 'POST', body: JSON.stringify(body) }),
   updateProfileRepository: (profileId: string, id: string, body: UpdateProfileRepositoryRequest) => request<ProfileRepository>(`/api/profiles/${profileId}/repositories/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteProfileRepository: (profileId: string, id: string) => request<void>(`/api/profiles/${profileId}/repositories/${id}`, { method: 'DELETE' }),
-  reorderProfileRepositories: (profileId: string, repositoryIds: string[]) => request<void>(`/api/profiles/${profileId}/repositories/order`, { method: 'PUT', body: JSON.stringify({ repositoryIds }) }),
+  createRepositoryPriorityFactor: (profileId: string, body: SaveRepositoryPriorityFactorRequest) => request<RepositoryPriorityFactor>(`/api/profiles/${profileId}/repository-priority-factors`, { method: 'POST', body: JSON.stringify(body) }),
+  updateRepositoryPriorityFactor: (profileId: string, id: string, body: SaveRepositoryPriorityFactorRequest) => request<RepositoryPriorityFactor>(`/api/profiles/${profileId}/repository-priority-factors/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteRepositoryPriorityFactor: (profileId: string, id: string) => request<void>(`/api/profiles/${profileId}/repository-priority-factors/${id}`, { method: 'DELETE' }),
+  reorderRepositoryPriorityFactors: (profileId: string, factorIds: string[]) => request<RepositoryPriorityFactor[]>(`/api/profiles/${profileId}/repository-priority-factors/order`, { method: 'PUT', body: JSON.stringify({ factorIds }) }),
+  updateRepositoryFactorRating: (profileId: string, repositoryId: string, factorId: string, body: UpdateRepositoryFactorRatingRequest) =>
+    request<RepositoryFactorRating>(`/api/profiles/${profileId}/repositories/${repositoryId}/factor-ratings/${factorId}`, { method: 'PUT', body: JSON.stringify(body) }),
   getProfileLabels: (profileId: string) => request<ProfileLabel[]>(`/api/profiles/${profileId}/labels`),
   discoverProfileLabels: (profileId: string, refresh = false) => request<LabelDiscovery>(`/api/profiles/${profileId}/labels/discover${refresh ? '?refresh=true' : ''}`, { method: 'POST' }),
   updateProfileLabel: (profileId: string, id: string, body: UpdateProfileLabelRequest) => request<ProfileLabel>(`/api/profiles/${profileId}/labels/${id}`, { method: 'PUT', body: JSON.stringify(body) }),

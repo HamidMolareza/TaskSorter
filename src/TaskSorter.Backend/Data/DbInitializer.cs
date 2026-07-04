@@ -164,6 +164,7 @@ public sealed class DbInitializer(
                     Name = name,
                     RepositoryTierId = tier.Id,
                     SortOrder = order++,
+                    RowVersion = 1,
                     CreatedAt = now,
                     UpdatedAt = now
                 });

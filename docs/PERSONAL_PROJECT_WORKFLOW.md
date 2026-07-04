@@ -6,7 +6,7 @@ TaskSorter is intended to be the read-only queue dashboard for personal projects
 
 - Each project owns its tasks in GitHub Issues.
 - Each project should keep a short `docs/GOALS.md` with purpose, current phase, and the top 1-3 outcomes.
-- TaskSorter profiles store cross-project priority, label priority, task limit, and delay settings.
+- TaskSorter profiles store repository factors and ratings, label priority, task limit, and delay settings.
 - `projects-status` is only a local repository hygiene signal. It should not decide product priority.
 
 ## Labels
@@ -59,7 +59,7 @@ Repositories without a tier default to `active`.
 
 ## Weekly Routine
 
-- Review active repositories and adjust profile tiers.
+- Review active repositories, adjust profile tiers, and refresh repository factor ratings.
 - Close, downgrade, or pause stale low-value issues.
 - Keep each active project to one to three `status/next` issues.
 - Move projects that are not realistic this month to `paused` or `archive`.

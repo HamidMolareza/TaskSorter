@@ -12,6 +12,7 @@ public sealed record ProfileDetailResponse(
     bool HasGitHubToken,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
+    IReadOnlyList<RepositoryPriorityFactorResponse> RepositoryPriorityFactors,
     IReadOnlyList<ProfileRepositoryResponse> Repositories,
     IReadOnlyList<ProfileLabelResponse> Labels)
 {
@@ -25,9 +26,13 @@ public sealed record ProfileDetailResponse(
         profile.HasGitHubToken,
         profile.CreatedAt,
         profile.UpdatedAt,
+        profile.RepositoryPriorityFactors
+            .OrderBy(factor => factor.SortOrder)
+            .Select(RepositoryPriorityFactorResponse.FromEntity)
+            .ToList(),
         profile.Repositories
             .OrderBy(repository => repository.SortOrder)
-            .Select((repository, index) => ProfileRepositoryResponse.FromEntity(repository, profile.Repositories.Count - index + 1))
+            .Select(repository => ProfileRepositoryResponse.FromEntity(repository, profile.RepositoryPriorityFactors))
             .ToList(),
         profile.Labels
             .OrderBy(label => label.IsIgnored)

@@ -1,60 +1,57 @@
-import { StrictMode } from 'react'
+import { StrictMode, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import CssBaseline from '@mui/material/CssBaseline'
-import { createTheme, ThemeProvider } from '@mui/material/styles'
+import { ThemeProvider } from '@mui/material/styles'
 import { App } from './App'
+import {
+  buildTheme, readStoredThemePreference, resolveThemeMode, writeStoredThemePreference,
+} from './theme'
+import type { ThemePreference } from './theme'
 
-const theme = createTheme({
-  palette: {
-    mode: 'light',
-    primary: {
-      main: '#1f6f5b',
-    },
-    secondary: {
-      main: '#2563a8',
-    },
-    warning: {
-      main: '#b66b1f',
-    },
-    background: {
-      default: '#f6f7f4',
-      paper: '#ffffff',
-    },
-  },
-  shape: {
-    borderRadius: 8,
-  },
-  typography: {
-    fontFamily: '"IBM Plex Sans", Aptos, "Noto Sans", sans-serif',
-    h1: {
-      fontSize: '2rem',
-      fontWeight: 700,
-      letterSpacing: 0,
-    },
-    h2: {
-      fontSize: '1.1rem',
-      fontWeight: 700,
-      letterSpacing: 0,
-    },
-    button: {
-      letterSpacing: 0,
-      textTransform: 'none',
-    },
-  },
-  components: {
-    MuiButton: {
-      defaultProps: {
-        disableElevation: true,
-      },
-    },
-  },
-})
+function Root() {
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => readStoredThemePreference())
+  const systemPrefersDark = useSystemPrefersDark()
+  const theme = useMemo(
+    () => buildTheme(resolveThemeMode(themePreference, systemPrefersDark)),
+    [systemPrefersDark, themePreference])
+
+  function changeThemePreference(preference: ThemePreference) {
+    setThemePreference(preference)
+    writeStoredThemePreference(preference)
+  }
+
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline enableColorScheme />
+      <App themePreference={themePreference} onThemePreferenceChange={changeThemePreference} />
+    </ThemeProvider>
+  )
+}
+
+function useSystemPrefersDark() {
+  const [prefersDark, setPrefersDark] = useState(() => readSystemPrefersDark())
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia)
+      return undefined
+    const query = window.matchMedia('(prefers-color-scheme: dark)')
+    const handleChange = (event: MediaQueryListEvent) => setPrefersDark(event.matches)
+    setPrefersDark(query.matches)
+    query.addEventListener('change', handleChange)
+    return () => query.removeEventListener('change', handleChange)
+  }, [])
+
+  return prefersDark
+}
+
+function readSystemPrefersDark() {
+  return typeof window !== 'undefined'
+    && Boolean(window.matchMedia)
+    && window.matchMedia('(prefers-color-scheme: dark)').matches
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <App />
-    </ThemeProvider>
+    <Root />
   </StrictMode>,
 )
