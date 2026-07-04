@@ -17,6 +17,7 @@ public sealed class TaskProfile
     public bool HasGitHubToken => !string.IsNullOrWhiteSpace(EncryptedGitHubToken);
     public List<ProfileRepository> Repositories { get; } = [];
     public List<ProfileLabel> Labels { get; } = [];
+    public List<RepositoryPriorityFactor> RepositoryPriorityFactors { get; } = [];
 
     public ProfileConfiguration ToConfiguration() => new(
         RepositoryLines,
@@ -26,13 +27,27 @@ public sealed class TaskProfile
         TaskPriorityFactors.FromJson(PriorityFactorsJson),
         Repositories
             .OrderBy(repository => repository.SortOrder)
-            .Select((repository, index) => new TaskSorter.Core.Models.Repository(
+            .Select(repository => new TaskSorter.Core.Models.Repository(
                 repository.Owner,
                 repository.Name,
-                Repositories.Count - index + 1,
+                CalculateFactorScore(repository, RepositoryPriorityFactors),
                 new TaskSorter.Core.Models.ProjectTier(repository.RepositoryTier.Name, repository.RepositoryTier.Score)))
             .ToList(),
         BuildConfiguredLabels());
+
+    public static int CalculateFactorScore(
+        ProfileRepository repository,
+        IReadOnlyCollection<RepositoryPriorityFactor> factors)
+    {
+        if (factors.Count == 0)
+            return 0;
+
+        var ratings = repository.FactorRatings.ToDictionary(
+            rating => rating.RepositoryPriorityFactorId,
+            rating => rating.Rating);
+
+        return factors.Sum(factor => (ratings.GetValueOrDefault(factor.Id, 1)) * factor.Weight);
+    }
 
     private IReadOnlyList<TaskSorter.Core.Models.Label> BuildConfiguredLabels()
     {

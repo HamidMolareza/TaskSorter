@@ -11,6 +11,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<RepositoryTier> RepositoryTiers => Set<RepositoryTier>();
     public DbSet<ProfileRepository> ProfileRepositories => Set<ProfileRepository>();
     public DbSet<ProfileLabel> ProfileLabels => Set<ProfileLabel>();
+    public DbSet<RepositoryPriorityFactor> RepositoryPriorityFactors => Set<RepositoryPriorityFactor>();
+    public DbSet<RepositoryFactorRating> RepositoryFactorRatings => Set<RepositoryFactorRating>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -52,6 +54,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.HasIndex(tier => tier.IsDefault).IsUnique().HasFilter("\"IsDefault\" = true");
             entity.Property(tier => tier.Name).HasMaxLength(80).IsRequired();
             entity.Property(tier => tier.NormalizedName).HasMaxLength(80).IsRequired();
+            entity.Property(tier => tier.RowVersion).IsConcurrencyToken();
         });
 
         modelBuilder.Entity<ProfileRepository>(entity =>
@@ -61,6 +64,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.HasIndex(repository => new { repository.ProfileId, repository.SortOrder }).IsUnique();
             entity.Property(repository => repository.Owner).HasMaxLength(100).IsRequired();
             entity.Property(repository => repository.Name).HasMaxLength(100).IsRequired();
+            entity.Property(repository => repository.RowVersion).IsConcurrencyToken();
             entity.HasOne(repository => repository.Profile)
                 .WithMany(profile => profile.Repositories)
                 .HasForeignKey(repository => repository.ProfileId)
@@ -69,6 +73,36 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .WithMany(tier => tier.ProfileRepositories)
                 .HasForeignKey(repository => repository.RepositoryTierId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<RepositoryPriorityFactor>(entity =>
+        {
+            entity.HasKey(factor => factor.Id);
+            entity.HasIndex(factor => new { factor.ProfileId, factor.NormalizedName }).IsUnique();
+            entity.HasIndex(factor => new { factor.ProfileId, factor.SortOrder }).IsUnique();
+            entity.Property(factor => factor.Name).HasMaxLength(80).IsRequired();
+            entity.Property(factor => factor.NormalizedName).HasMaxLength(80).IsRequired();
+            entity.Property(factor => factor.Description).HasMaxLength(500).IsRequired();
+            entity.Property(factor => factor.RowVersion).IsConcurrencyToken();
+            entity.HasOne(factor => factor.Profile)
+                .WithMany(profile => profile.RepositoryPriorityFactors)
+                .HasForeignKey(factor => factor.ProfileId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<RepositoryFactorRating>(entity =>
+        {
+            entity.HasKey(rating => new { rating.ProfileRepositoryId, rating.RepositoryPriorityFactorId });
+            entity.HasIndex(rating => rating.RepositoryPriorityFactorId);
+            entity.Property(rating => rating.RowVersion).IsConcurrencyToken();
+            entity.HasOne(rating => rating.ProfileRepository)
+                .WithMany(repository => repository.FactorRatings)
+                .HasForeignKey(rating => rating.ProfileRepositoryId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(rating => rating.RepositoryPriorityFactor)
+                .WithMany(factor => factor.Ratings)
+                .HasForeignKey(rating => rating.RepositoryPriorityFactorId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<ProfileLabel>(entity =>

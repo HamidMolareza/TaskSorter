@@ -57,25 +57,6 @@ public sealed class ProfileApiTests(TaskSorterWebApplicationFactory factory) : I
     }
 
     [Fact]
-    public async Task ReorderRepositories_PersistsTheRequestedOrder()
-    {
-        var profile = await CreateProfileAsync("Repository order", null);
-        var tier = await GetDefaultTierAsync();
-        var first = await CreateRepositoryAsync(profile.Id, "owner", "first", tier.Id);
-        var second = await CreateRepositoryAsync(profile.Id, "owner", "second", tier.Id);
-        var third = await CreateRepositoryAsync(profile.Id, "owner", "third", tier.Id);
-
-        var response = await _client.PutAsJsonAsync(
-            $"/api/profiles/{profile.Id}/repositories/order",
-            new ReorderProfileRepositoriesRequest([third.Id, first.Id, second.Id]));
-
-        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
-        var refreshed = await _client.GetFromJsonAsync<ProfileDetailResponse>($"/api/profiles/{profile.Id}");
-        Assert.NotNull(refreshed);
-        Assert.Equal(["owner/third", "owner/first", "owner/second"], refreshed.Repositories.Select(repository => repository.FullName));
-    }
-
-    [Fact]
     public async Task RepositoryTierNames_AreUniqueIgnoringCase()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
@@ -208,6 +189,51 @@ public sealed class ProfileApiTests(TaskSorterWebApplicationFactory factory) : I
     }
 
     [Fact]
+    public async Task DiscoverLabels_WithNoRepositories_RemovesExistingLabelsWithoutGitHubRequest()
+    {
+        var profile = await CreateRunnableProfileAsync("Label cleanup", "ghp_test");
+        var firstDiscovery = await _client.PostAsync($"/api/profiles/{profile.Id}/labels/discover", null);
+        firstDiscovery.EnsureSuccessStatusCode();
+        Assert.NotEmpty((await firstDiscovery.Content.ReadFromJsonAsync<LabelDiscoveryResponse>())!.Labels);
+        var repository = Assert.Single((await _client.GetFromJsonAsync<ProfileDetailResponse>($"/api/profiles/{profile.Id}"))!.Repositories);
+        (await _client.DeleteAsync($"/api/profiles/{profile.Id}/repositories/{repository.Id}")).EnsureSuccessStatusCode();
+        factory.GitHubTaskClient.ClearRequests();
+
+        var response = await _client.PostAsync($"/api/profiles/{profile.Id}/labels/discover", null);
+
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<LabelDiscoveryResponse>();
+        Assert.NotNull(result);
+        Assert.Empty(result.Labels);
+        Assert.Equal(0, result.NewLabelCount);
+        Assert.Equal(3, result.RemovedLabelCount);
+        Assert.Equal("disabled", result.Cache.Status);
+        Assert.Equal(0, result.Cache.GitHubRequestCount);
+        Assert.Equal("unknown", result.Quota.Status);
+        Assert.Empty(factory.GitHubTaskClient.RefreshRequests);
+
+        var refreshed = await _client.GetFromJsonAsync<ProfileDetailResponse>($"/api/profiles/{profile.Id}");
+        Assert.NotNull(refreshed);
+        Assert.Empty(refreshed.Repositories);
+        Assert.Empty(refreshed.Labels);
+    }
+
+    [Fact]
+    public async Task DiscoverLabels_WithNoRepositories_DoesNotRequireGitHubToken()
+    {
+        var profile = await CreateProfileAsync("Label cleanup no token", null);
+
+        var response = await _client.PostAsync($"/api/profiles/{profile.Id}/labels/discover", null);
+
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<LabelDiscoveryResponse>();
+        Assert.NotNull(result);
+        Assert.Empty(result.Labels);
+        Assert.Equal(0, result.RemovedLabelCount);
+        Assert.Equal(0, result.Cache.GitHubRequestCount);
+    }
+
+    [Fact]
     public async Task LabelOrders_AreUniqueAndIgnoredLabelsAreNotRanked()
     {
         var profile = await CreateRunnableProfileAsync("Label groups", "ghp_test");
@@ -234,6 +260,85 @@ public sealed class ProfileApiTests(TaskSorterWebApplicationFactory factory) : I
         var restored = await _client.GetFromJsonAsync<ProfileDetailResponse>($"/api/profiles/{profile.Id}");
         Assert.NotNull(restored);
         Assert.True(restored.Labels.Single(label => label.Id == size.Id).IsIgnored);
+    }
+
+    [Fact]
+    public async Task RepositoryFactors_DefaultToOneAndAffectRepositoryScore()
+    {
+        var profile = await CreateProfileAsync("Repository factors", "ghp_test");
+        var tier = await GetDefaultTierAsync();
+        var factorResponse = await _client.PostAsJsonAsync(
+            $"/api/profiles/{profile.Id}/repository-priority-factors",
+            new SaveRepositoryPriorityFactorRequest("Urgency", "How soon this repository matters.", 8));
+        factorResponse.EnsureSuccessStatusCode();
+        var factor = await factorResponse.Content.ReadFromJsonAsync<RepositoryPriorityFactorResponse>();
+        Assert.NotNull(factor);
+
+        var repository = await CreateRepositoryAsync(profile.Id, "owner", "repo", tier.Id);
+
+        Assert.Equal(8, repository.FactorScore);
+        Assert.Equal(tier.Score + 8, repository.Score);
+        Assert.Equal(1, Assert.Single(repository.Ratings).Rating);
+
+        var ratingResponse = await _client.PutAsJsonAsync(
+            $"/api/profiles/{profile.Id}/repositories/{repository.Id}/factor-ratings/{factor.Id}",
+            new UpdateRepositoryFactorRatingRequest(5, repository.Ratings[0].RowVersion));
+        ratingResponse.EnsureSuccessStatusCode();
+
+        var refreshed = await _client.GetFromJsonAsync<ProfileDetailResponse>($"/api/profiles/{profile.Id}");
+        Assert.NotNull(refreshed);
+        var scoredRepository = Assert.Single(refreshed.Repositories);
+        Assert.Equal(40, scoredRepository.FactorScore);
+        Assert.Equal(tier.Score + 40, scoredRepository.Score);
+
+        var runResponse = await _client.PostAsync($"/api/profiles/{profile.Id}/run", null);
+        runResponse.EnsureSuccessStatusCode();
+        var run = await runResponse.Content.ReadFromJsonAsync<TaskRunResponse>();
+        Assert.NotNull(run);
+        Assert.Equal(tier.Score + 40, run.Items[0].ScoreBreakdown.Repository);
+    }
+
+    [Fact]
+    public async Task UpdateRepository_WithInvalidCoordinates_ReturnsValidationProblem()
+    {
+        var profile = await CreateProfileAsync("Invalid repository update", "ghp_test");
+        var tier = await GetDefaultTierAsync();
+        var repository = await CreateRepositoryAsync(profile.Id, "owner", "repo", tier.Id);
+
+        var response = await _client.PutAsJsonAsync(
+            $"/api/profiles/{profile.Id}/repositories/{repository.Id}",
+            new UpdateProfileRepositoryRequest("owner", "bad/name", tier.Id, repository.RowVersion));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("Repository owner and name are required", body);
+
+        var refreshed = await _client.GetFromJsonAsync<ProfileDetailResponse>($"/api/profiles/{profile.Id}");
+        Assert.NotNull(refreshed);
+        Assert.Equal("owner/repo", Assert.Single(refreshed.Repositories).FullName);
+    }
+
+    [Fact]
+    public async Task UpdateRepositoryFactorRating_WithStaleRowVersion_ReturnsConflictWithLatestProfile()
+    {
+        var profile = await CreateProfileAsync("Rating conflict", "ghp_test");
+        var tier = await GetDefaultTierAsync();
+        var factorResponse = await _client.PostAsJsonAsync(
+            $"/api/profiles/{profile.Id}/repository-priority-factors",
+            new SaveRepositoryPriorityFactorRequest("Need", "How useful this repository is.", 5));
+        factorResponse.EnsureSuccessStatusCode();
+        var factor = await factorResponse.Content.ReadFromJsonAsync<RepositoryPriorityFactorResponse>();
+        Assert.NotNull(factor);
+        var repository = await CreateRepositoryAsync(profile.Id, "owner", "conflict", tier.Id);
+
+        var conflict = await _client.PutAsJsonAsync(
+            $"/api/profiles/{profile.Id}/repositories/{repository.Id}/factor-ratings/{factor.Id}",
+            new UpdateRepositoryFactorRatingRequest(4, 999));
+
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+        var body = await conflict.Content.ReadAsStringAsync();
+        Assert.Contains("latestProfile", body);
+        Assert.Contains("Rating changed", body);
     }
 
     private async Task<ProfileDetailResponse> CreateRunnableProfileAsync(string prefix, string token, TaskPriorityFactors? factors = null)

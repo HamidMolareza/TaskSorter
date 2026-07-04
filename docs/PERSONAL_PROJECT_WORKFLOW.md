@@ -6,7 +6,7 @@ TaskSorter is intended to be the read-only queue dashboard for personal projects
 
 - Each project owns its tasks in GitHub Issues.
 - Each project should keep a short `docs/GOALS.md` with purpose, current phase, and the top 1-3 outcomes.
-- TaskSorter profiles store cross-project priority, label priority, task limit, and delay settings.
+- TaskSorter profiles store repository factors and ratings, label priority, task limit, and delay settings.
 - `projects-status` is only a local repository hygiene signal. It should not decide product priority.
 
 ## Labels
@@ -34,19 +34,19 @@ size/l
 
 TaskSorter also recognizes older TaskSorter labels such as `priority-high`, `scope-bug`, and `status-in-progress`.
 
-## Project Tiers
+## Repository Tiers
 
-Repository profile text supports optional project tiers:
+TaskSorter stores repository tiers as global database records. Use the Scoring tab to maintain the tier catalog and choose the default tier. Use the Repositories tab to assign one tier to each repository:
 
 ```text
-HamidMolareza/TaskSorter core
-HamidMolareza/SomeActiveProject active
-HamidMolareza/OldProject maintenance
-HamidMolareza/PausedIdea paused
-HamidMolareza/ArchivedIdea archive
+HamidMolareza/TaskSorter -> core
+HamidMolareza/SomeActiveProject -> active
+HamidMolareza/OldProject -> maintenance
+HamidMolareza/PausedIdea -> paused
+HamidMolareza/ArchivedIdea -> archive
 ```
 
-Repositories without a tier default to `active`.
+New repositories use the current default tier when no tier is selected. The seeded default is `active`, but it can be changed in the Scoring tab.
 
 ## Daily Routine
 
@@ -59,7 +59,7 @@ Repositories without a tier default to `active`.
 
 ## Weekly Routine
 
-- Review active repositories and adjust profile tiers.
+- Review active repositories, adjust profile tiers, and refresh repository factor ratings.
 - Close, downgrade, or pause stale low-value issues.
 - Keep each active project to one to three `status/next` issues.
 - Move projects that are not realistic this month to `paused` or `archive`.

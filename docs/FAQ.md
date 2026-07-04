@@ -12,7 +12,7 @@ No. TaskSorter only reads GitHub issues and pull requests. It does not create is
 
 ### 3. Where is configuration stored?
 
-Configuration is stored in PostgreSQL as named profiles, global repository tiers, per-profile repository rows, and per-profile label rows. Each label row is ordered, pending, or ignored.
+Configuration is stored in PostgreSQL as named profiles, global repository tiers, per-profile repository factor rows, per-profile repository rows with factor ratings, and per-profile label rows. Each label row is ordered, pending, or ignored.
 
 ### 4. How are GitHub tokens stored?
 
@@ -28,11 +28,11 @@ Previously encrypted tokens may become unreadable. Keep the `data-protection-key
 
 ### 7. How does TaskSorter calculate priority?
 
-TaskSorter scores each task from repository row order, its selected repository tier score, matching label priorities, assignment, and lock state. Higher scores appear earlier in the queue. Labels such as `status/*` and `size/*` are normal label priority entries, so their weights are controlled in the Labels tab. The Scoring tab manages global repository tiers and the profile's assignment bonus and lock penalty.
+TaskSorter scores each task from its repository score, matching label priorities, assignment, and lock state. Repository score is the selected repository tier score plus profile-specific factor ratings, where each rating from 1 to 5 is multiplied by the factor weight. Higher scores appear earlier in the queue. Labels such as `status/*` and `size/*` are normal label priority entries, so their weights are controlled in the Labels tab. The Scoring tab manages global repository tiers and the profile's assignment bonus and lock penalty.
 
 ### 8. How do I manage repositories and tiers?
 
-Add each repository as an `owner/repository` row in the Repositories tab, select one tier from the combobox, then drag it or use the move controls to set its order. Rows save automatically and reject duplicate repositories in the same profile. The Scoring tab manages the global tier catalog and its default tier. Deleting an assigned non-default tier asks for confirmation, then reassigns those repositories to the default tier.
+Define repository factors in the Factors tab, then add each repository as an `owner/repository` row in the Repositories tab and select one tier from the combobox. Rate each repository from 1 to 5 for every factor. Rows and ratings save automatically and reject duplicate repositories in the same profile. The Repositories tab does not reorder while you edit ratings; use `Sort by score` to view the highest-scoring repositories first. The Scoring tab manages the global tier catalog and its default tier. Deleting an assigned non-default tier asks for confirmation, then reassigns those repositories to the default tier.
 
 ### 9. How are labels discovered and ordered?
 
@@ -40,7 +40,7 @@ The Labels tab collects distinct labels from open issues and pull requests in co
 
 ### 10. How does validation work?
 
-Repository rows show validation status and reject invalid or duplicate names. A profile can be created before it is complete, but running requires at least one repository and a GitHub token. Pending or ignored labels remain unscored until ranked.
+Repository rows show validation status and reject invalid or duplicate names. Invalid rows are highlighted in the Repositories table. A profile can be created before it is complete, but running requires at least one repository and a GitHub token. Pending or ignored labels remain unscored until ranked.
 
 ### 11. Why does GitHub rate limiting matter?
 
@@ -48,7 +48,7 @@ Each uncached run fetches current-user issues and repository issues. Large profi
 
 ### 12. How does GitHub caching work?
 
-TaskSorter caches successful GitHub reads in the backend for 5 minutes by default. The backend keeps a hot in-memory copy and stores cache entries in PostgreSQL until their TTL expires, so Docker backend restarts can reuse recent cached data. It caches normalized GitHub task data, not final ranked results. If you change `Top`, label order, repository row order, tier assignment, tier score, or tuning, TaskSorter re-ranks cached items with the current settings. Use the Cache tab `Clear cache and refresh` button when fresh GitHub data is required.
+TaskSorter caches successful GitHub reads in the backend for 5 minutes by default. The backend keeps a hot in-memory copy and stores cache entries in PostgreSQL until their TTL expires, so Docker backend restarts can reuse recent cached data. It caches normalized GitHub task data, not final ranked results. If you change `Top`, label order, repository factors, repository ratings, tier assignment, tier score, or tuning, TaskSorter re-ranks cached items with the current settings. Use the Cache tab `Clear cache and refresh` button when fresh GitHub data is required.
 
 ### 13. Why can a run time out?
 
@@ -58,7 +58,11 @@ The run button waits for GitHub reads across the whole profile. Large profiles, 
 
 Yes, if the saved GitHub token has read access to those repositories.
 
-### 15. How do I run everything locally?
+### 15. Does TaskSorter support dark mode?
+
+Yes. Use the theme button in the header to choose Light, Dark, or System. The choice is saved in browser storage and System follows the operating system color-scheme preference.
+
+### 16. How do I run everything locally?
 
 Use Docker Compose:
 

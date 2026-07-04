@@ -17,6 +17,7 @@ public static class ProfileEndpoints
     private const int DefaultGitHubRequestTimeoutSeconds = 45;
     private const int ClientClosedRequestStatusCode = 499;
     private const string CorrelationItemName = "CorrelationId";
+    private const string RepositoryCoordinateValidationMessage = "Repository owner and name are required and may only contain letters, numbers, dots, dashes, or underscores.";
     private static readonly JsonSerializerOptions StreamJsonOptions = new(JsonSerializerDefaults.Web);
 
     public static RouteGroupBuilder MapProfileEndpoints(this IEndpointRouteBuilder routes)
@@ -42,6 +43,9 @@ public static class ProfileEndpoints
             var profile = await dbContext.TaskProfiles
                 .Include(profile => profile.Repositories)
                 .ThenInclude(repository => repository.RepositoryTier)
+                .Include(profile => profile.Repositories)
+                .ThenInclude(repository => repository.FactorRatings)
+                .Include(profile => profile.RepositoryPriorityFactors)
                 .Include(profile => profile.Labels)
                 .AsNoTracking()
                 .FirstOrDefaultAsync(profile => profile.Id == id, cancellationToken);
@@ -129,6 +133,9 @@ public static class ProfileEndpoints
             var profile = await dbContext.TaskProfiles
                 .Include(profile => profile.Repositories)
                 .ThenInclude(repository => repository.RepositoryTier)
+                .Include(profile => profile.Repositories)
+                .ThenInclude(repository => repository.FactorRatings)
+                .Include(profile => profile.RepositoryPriorityFactors)
                 .Include(profile => profile.Labels)
                 .FirstOrDefaultAsync(profile => profile.Id == id, cancellationToken);
             if (profile is null)
@@ -192,6 +199,7 @@ public static class ProfileEndpoints
 
         MapRepositoryTierEndpoints(group);
         MapProfileRepositoryEndpoints(group);
+        MapRepositoryPriorityFactorEndpoints(group);
         MapProfileLabelEndpoints(group);
 
         group.MapPost("/profiles/{id:guid}/run", async (
@@ -208,6 +216,9 @@ public static class ProfileEndpoints
             var profile = await dbContext.TaskProfiles
                 .Include(profile => profile.Repositories)
                 .ThenInclude(repository => repository.RepositoryTier)
+                .Include(profile => profile.Repositories)
+                .ThenInclude(repository => repository.FactorRatings)
+                .Include(profile => profile.RepositoryPriorityFactors)
                 .Include(profile => profile.Labels)
                 .AsNoTracking()
                 .FirstOrDefaultAsync(profile => profile.Id == id, cancellationToken);
@@ -353,6 +364,9 @@ public static class ProfileEndpoints
             var profile = await dbContext.TaskProfiles
                 .Include(profile => profile.Repositories)
                 .ThenInclude(repository => repository.RepositoryTier)
+                .Include(profile => profile.Repositories)
+                .ThenInclude(repository => repository.FactorRatings)
+                .Include(profile => profile.RepositoryPriorityFactors)
                 .Include(profile => profile.Labels)
                 .AsNoTracking()
                 .FirstOrDefaultAsync(profile => profile.Id == id, cancellationToken);
@@ -567,6 +581,7 @@ public static class ProfileEndpoints
                     tier.Score,
                     tier.IsDefault,
                     tier.ProfileRepositories.Count,
+                    tier.RowVersion,
                     tier.UpdatedAt))
                 .ToListAsync(cancellationToken);
             return Results.Ok(tiers);
@@ -619,10 +634,19 @@ public static class ProfileEndpoints
                 return ValidationProblem([new ValidationIssue("name", "Tier name is required and must be 80 characters or fewer.")]);
             if (await dbContext.RepositoryTiers.AnyAsync(other => other.Id != id && other.NormalizedName == name, cancellationToken))
                 return ValidationProblem([new ValidationIssue("name", "Tier name must be unique.")]);
+            if (request.RowVersion is null || request.RowVersion.Value != tier.RowVersion)
+                return Results.Conflict(new
+                {
+                    message = "Repository tier changed on the server. Refresh and try again.",
+                    latestTier = RepositoryTierResponse.FromEntity(
+                        tier,
+                        await dbContext.ProfileRepositories.CountAsync(repository => repository.RepositoryTierId == id, cancellationToken))
+                });
 
             tier.Name = request.Name.Trim();
             tier.NormalizedName = name;
             tier.Score = request.Score;
+            tier.RowVersion++;
             tier.UpdatedAt = DateTimeOffset.UtcNow;
             await dbContext.SaveChangesAsync(cancellationToken);
             CreateLogger(loggerFactory).LogInformation("RepositoryTierUpdated for {RepositoryTierId} named {RepositoryTierName}.", tier.Id, tier.Name);
@@ -652,6 +676,7 @@ public static class ProfileEndpoints
                             setters => setters.SetProperty(candidate => candidate.IsDefault, false),
                             cancellationToken);
                     tier.IsDefault = true;
+                    tier.RowVersion++;
                     tier.UpdatedAt = updatedAt;
                     await dbContext.SaveChangesAsync(cancellationToken);
                     await transaction.CommitAsync(cancellationToken);
@@ -663,6 +688,7 @@ public static class ProfileEndpoints
                         candidate.IsDefault = false;
                     await dbContext.SaveChangesAsync(cancellationToken);
                     tier.IsDefault = true;
+                    tier.RowVersion++;
                     tier.UpdatedAt = updatedAt;
                     await dbContext.SaveChangesAsync(cancellationToken);
                 }
@@ -715,13 +741,19 @@ public static class ProfileEndpoints
     {
         group.MapGet("/profiles/{profileId:guid}/repositories", async (Guid profileId, AppDbContext dbContext, CancellationToken cancellationToken) =>
         {
+            var factors = await dbContext.RepositoryPriorityFactors
+                .AsNoTracking()
+                .Where(factor => factor.ProfileId == profileId)
+                .OrderBy(factor => factor.SortOrder)
+                .ToListAsync(cancellationToken);
             var repositories = await dbContext.ProfileRepositories
                 .AsNoTracking()
                 .Include(repository => repository.RepositoryTier)
+                .Include(repository => repository.FactorRatings)
                 .Where(repository => repository.ProfileId == profileId)
                 .OrderBy(repository => repository.SortOrder)
                 .ToListAsync(cancellationToken);
-            return Results.Ok(repositories.Select((repository, index) => ProfileRepositoryResponse.FromEntity(repository, repositories.Count - index + 1)).ToList());
+            return Results.Ok(repositories.Select(repository => ProfileRepositoryResponse.FromEntity(repository, factors)).ToList());
         });
 
         group.MapPost("/profiles/{profileId:guid}/repositories", async (
@@ -735,13 +767,17 @@ public static class ProfileEndpoints
                 return Results.NotFound();
             var coordinates = NormalizeRepository(request.Owner, request.Name);
             if (coordinates is null)
-                return ValidationProblem([new ValidationIssue("repository", "Repository must use an owner and name without slashes.")]);
+                return ValidationProblem([new ValidationIssue("repository", RepositoryCoordinateValidationMessage)]);
             if (await dbContext.ProfileRepositories.AnyAsync(repository => repository.ProfileId == profileId && repository.Owner == coordinates.Value.Owner && repository.Name == coordinates.Value.Name, cancellationToken))
                 return ValidationProblem([new ValidationIssue("repository", "This repository is already configured for the profile.")]);
 
             var tier = await ResolveTierAsync(request.RepositoryTierId, dbContext, cancellationToken);
             if (tier is null)
                 return ValidationProblem([new ValidationIssue("repositoryTierId", "Choose a valid repository tier.")]);
+            var factors = await dbContext.RepositoryPriorityFactors
+                .Where(factor => factor.ProfileId == profileId)
+                .OrderBy(factor => factor.SortOrder)
+                .ToListAsync(cancellationToken);
             var sortOrder = await dbContext.ProfileRepositories.CountAsync(repository => repository.ProfileId == profileId, cancellationToken);
             var now = DateTimeOffset.UtcNow;
             var repository = new ProfileRepository
@@ -756,10 +792,23 @@ public static class ProfileEndpoints
                 CreatedAt = now,
                 UpdatedAt = now
             };
+            foreach (var factor in factors)
+            {
+                repository.FactorRatings.Add(new RepositoryFactorRating
+                {
+                    ProfileRepository = repository,
+                    RepositoryPriorityFactorId = factor.Id,
+                    RepositoryPriorityFactor = factor,
+                    Rating = 1,
+                    RowVersion = 1,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+            }
             dbContext.ProfileRepositories.Add(repository);
             await dbContext.SaveChangesAsync(cancellationToken);
             CreateLogger(loggerFactory).LogInformation("ProfileRepositoryCreated for {ProfileId}: {RepositoryFullName} using tier {RepositoryTierId}.", profileId, repository.FullName, tier.Id);
-            return Results.Created($"/api/profiles/{profileId}/repositories/{repository.Id}", ProfileRepositoryResponse.FromEntity(repository, sortOrder + 1));
+            return Results.Created($"/api/profiles/{profileId}/repositories/{repository.Id}", ProfileRepositoryResponse.FromEntity(repository, factors));
         });
 
         group.MapPut("/profiles/{profileId:guid}/repositories/{id:guid}", async (
@@ -772,28 +821,39 @@ public static class ProfileEndpoints
         {
             var repository = await dbContext.ProfileRepositories
                 .Include(candidate => candidate.RepositoryTier)
+                .Include(candidate => candidate.FactorRatings)
                 .FirstOrDefaultAsync(candidate => candidate.Id == id && candidate.ProfileId == profileId, cancellationToken);
             if (repository is null)
                 return Results.NotFound();
             var coordinates = NormalizeRepository(request.Owner, request.Name);
             if (coordinates is null)
-                return ValidationProblem([new ValidationIssue("repository", "Repository must use an owner and name without slashes.")]);
+                return ValidationProblem([new ValidationIssue("repository", RepositoryCoordinateValidationMessage)]);
             if (await dbContext.ProfileRepositories.AnyAsync(candidate => candidate.ProfileId == profileId && candidate.Id != id && candidate.Owner == coordinates.Value.Owner && candidate.Name == coordinates.Value.Name, cancellationToken))
                 return ValidationProblem([new ValidationIssue("repository", "This repository is already configured for the profile.")]);
             var tier = await ResolveTierAsync(request.RepositoryTierId, dbContext, cancellationToken);
             if (tier is null)
                 return ValidationProblem([new ValidationIssue("repositoryTierId", "Choose a valid repository tier.")]);
+            if (request.RowVersion != repository.RowVersion)
+                return Results.Conflict(new
+                {
+                    message = "Repository changed on the server. The latest profile was loaded.",
+                    latestProfile = await LoadProfileDetailResponseAsync(profileId, dbContext, cancellationToken)
+                });
 
             repository.Owner = coordinates.Value.Owner;
             repository.Name = coordinates.Value.Name;
             repository.RepositoryTierId = tier.Id;
             repository.RepositoryTier = tier;
+            repository.RowVersion++;
             repository.UpdatedAt = DateTimeOffset.UtcNow;
             await dbContext.SaveChangesAsync(cancellationToken);
             CreateLogger(loggerFactory).LogInformation("ProfileRepositoryUpdated for {ProfileId}: {RepositoryId}.", profileId, id);
-            var count = await dbContext.ProfileRepositories.CountAsync(candidate => candidate.ProfileId == profileId && candidate.SortOrder <= repository.SortOrder, cancellationToken);
-            var total = await dbContext.ProfileRepositories.CountAsync(candidate => candidate.ProfileId == profileId, cancellationToken);
-            return Results.Ok(ProfileRepositoryResponse.FromEntity(repository, total - count + 1));
+            var factors = await dbContext.RepositoryPriorityFactors
+                .AsNoTracking()
+                .Where(factor => factor.ProfileId == profileId)
+                .OrderBy(factor => factor.SortOrder)
+                .ToListAsync(cancellationToken);
+            return Results.Ok(ProfileRepositoryResponse.FromEntity(repository, factors));
         });
 
         group.MapDelete("/profiles/{profileId:guid}/repositories/{id:guid}", async (Guid profileId, Guid id, AppDbContext dbContext, ILoggerFactory loggerFactory, CancellationToken cancellationToken) =>
@@ -808,13 +868,205 @@ public static class ProfileEndpoints
             return Results.NoContent();
         });
 
-        group.MapPut("/profiles/{profileId:guid}/repositories/order", async (Guid profileId, ReorderProfileRepositoriesRequest request, AppDbContext dbContext, CancellationToken cancellationToken) =>
+        group.MapPut("/profiles/{profileId:guid}/repositories/{repositoryId:guid}/factor-ratings/{factorId:guid}", async (
+            Guid profileId,
+            Guid repositoryId,
+            Guid factorId,
+            UpdateRepositoryFactorRatingRequest request,
+            AppDbContext dbContext,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
         {
-            var repositories = await dbContext.ProfileRepositories.Where(repository => repository.ProfileId == profileId).ToListAsync(cancellationToken);
-            if (repositories.Count != request.RepositoryIds.Count || repositories.Select(repository => repository.Id).Except(request.RepositoryIds).Any())
-                return ValidationProblem([new ValidationIssue("repositoryIds", "The reorder list must contain every repository exactly once.")]);
-            await ApplyRepositoryOrderAsync(repositories, request.RepositoryIds, dbContext, cancellationToken);
+            if (request.Rating is < 1 or > 5)
+                return ValidationProblem([new ValidationIssue("rating", "Rating must be between 1 and 5.")]);
+
+            var exists = await dbContext.ProfileRepositories.AnyAsync(
+                repository => repository.Id == repositoryId && repository.ProfileId == profileId,
+                cancellationToken);
+            if (!exists)
+                return Results.NotFound();
+
+            var factorExists = await dbContext.RepositoryPriorityFactors.AnyAsync(
+                factor => factor.Id == factorId && factor.ProfileId == profileId,
+                cancellationToken);
+            if (!factorExists)
+                return Results.NotFound();
+
+            var now = DateTimeOffset.UtcNow;
+            var rating = await dbContext.RepositoryFactorRatings.FirstOrDefaultAsync(
+                candidate => candidate.ProfileRepositoryId == repositoryId && candidate.RepositoryPriorityFactorId == factorId,
+                cancellationToken);
+            if (rating is null)
+            {
+                if (request.RowVersion != 0)
+                    return Results.Conflict(new
+                    {
+                        message = "Rating changed on the server. The latest profile was loaded.",
+                        latestProfile = await LoadProfileDetailResponseAsync(profileId, dbContext, cancellationToken)
+                    });
+
+                rating = new RepositoryFactorRating
+                {
+                    ProfileRepositoryId = repositoryId,
+                    RepositoryPriorityFactorId = factorId,
+                    Rating = request.Rating,
+                    RowVersion = 1,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                dbContext.RepositoryFactorRatings.Add(rating);
+            }
+            else
+            {
+                if (request.RowVersion != rating.RowVersion)
+                    return Results.Conflict(new
+                    {
+                        message = "Rating changed on the server. The latest profile was loaded.",
+                        latestProfile = await LoadProfileDetailResponseAsync(profileId, dbContext, cancellationToken)
+                    });
+
+                rating.Rating = request.Rating;
+                rating.RowVersion++;
+                rating.UpdatedAt = now;
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+            CreateLogger(loggerFactory).LogInformation("RepositoryFactorRatingUpdated for {ProfileId}: {RepositoryId}/{FactorId}.", profileId, repositoryId, factorId);
+            return Results.Ok(new RepositoryFactorRatingResponse(factorId, rating.Rating, rating.RowVersion));
+        });
+    }
+
+    private static void MapRepositoryPriorityFactorEndpoints(RouteGroupBuilder group)
+    {
+        group.MapPost("/profiles/{profileId:guid}/repository-priority-factors", async (
+            Guid profileId,
+            SaveRepositoryPriorityFactorRequest request,
+            AppDbContext dbContext,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            if (!await dbContext.TaskProfiles.AnyAsync(profile => profile.Id == profileId, cancellationToken))
+                return Results.NotFound();
+
+            var validationErrors = ValidateRepositoryPriorityFactorRequest(request);
+            if (validationErrors.Count > 0)
+                return ValidationProblem(validationErrors);
+
+            var normalizedName = NormalizeFactorName(request.Name)!;
+            if (await dbContext.RepositoryPriorityFactors.AnyAsync(factor => factor.ProfileId == profileId && factor.NormalizedName == normalizedName, cancellationToken))
+                return ValidationProblem([new ValidationIssue("name", "Factor name must be unique in this profile.")]);
+
+            var repositories = await dbContext.ProfileRepositories
+                .Where(repository => repository.ProfileId == profileId)
+                .OrderBy(repository => repository.SortOrder)
+                .ToListAsync(cancellationToken);
+            var sortOrder = await dbContext.RepositoryPriorityFactors.CountAsync(factor => factor.ProfileId == profileId, cancellationToken);
+            var now = DateTimeOffset.UtcNow;
+            var factor = new RepositoryPriorityFactor
+            {
+                Id = Guid.NewGuid(),
+                ProfileId = profileId,
+                Name = request.Name.Trim(),
+                NormalizedName = normalizedName,
+                Description = request.Description.Trim(),
+                Weight = request.Weight,
+                SortOrder = sortOrder,
+                RowVersion = 1,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            foreach (var repository in repositories)
+            {
+                factor.Ratings.Add(new RepositoryFactorRating
+                {
+                    ProfileRepositoryId = repository.Id,
+                    RepositoryPriorityFactor = factor,
+                    Rating = 1,
+                    RowVersion = 1,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+            }
+
+            dbContext.RepositoryPriorityFactors.Add(factor);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            CreateLogger(loggerFactory).LogInformation("RepositoryPriorityFactorCreated for {ProfileId}: {FactorId}.", profileId, factor.Id);
+            return Results.Created($"/api/profiles/{profileId}/repository-priority-factors/{factor.Id}", RepositoryPriorityFactorResponse.FromEntity(factor));
+        });
+
+        group.MapPut("/profiles/{profileId:guid}/repository-priority-factors/{factorId:guid}", async (
+            Guid profileId,
+            Guid factorId,
+            SaveRepositoryPriorityFactorRequest request,
+            AppDbContext dbContext,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            var factor = await dbContext.RepositoryPriorityFactors.FirstOrDefaultAsync(
+                candidate => candidate.Id == factorId && candidate.ProfileId == profileId,
+                cancellationToken);
+            if (factor is null)
+                return Results.NotFound();
+
+            var validationErrors = ValidateRepositoryPriorityFactorRequest(request, requireRowVersion: true);
+            if (validationErrors.Count > 0)
+                return ValidationProblem(validationErrors);
+            if (request.RowVersion != factor.RowVersion)
+                return Results.Conflict(new
+                {
+                    message = "Factor changed on the server. The latest profile was loaded.",
+                    latestProfile = await LoadProfileDetailResponseAsync(profileId, dbContext, cancellationToken)
+                });
+
+            var normalizedName = NormalizeFactorName(request.Name)!;
+            if (await dbContext.RepositoryPriorityFactors.AnyAsync(other => other.ProfileId == profileId && other.Id != factorId && other.NormalizedName == normalizedName, cancellationToken))
+                return ValidationProblem([new ValidationIssue("name", "Factor name must be unique in this profile.")]);
+
+            factor.Name = request.Name.Trim();
+            factor.NormalizedName = normalizedName;
+            factor.Description = request.Description.Trim();
+            factor.Weight = request.Weight;
+            factor.RowVersion++;
+            factor.UpdatedAt = DateTimeOffset.UtcNow;
+            await dbContext.SaveChangesAsync(cancellationToken);
+            CreateLogger(loggerFactory).LogInformation("RepositoryPriorityFactorUpdated for {ProfileId}: {FactorId}.", profileId, factor.Id);
+            return Results.Ok(RepositoryPriorityFactorResponse.FromEntity(factor));
+        });
+
+        group.MapDelete("/profiles/{profileId:guid}/repository-priority-factors/{factorId:guid}", async (
+            Guid profileId,
+            Guid factorId,
+            AppDbContext dbContext,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            var factor = await dbContext.RepositoryPriorityFactors.FirstOrDefaultAsync(
+                candidate => candidate.Id == factorId && candidate.ProfileId == profileId,
+                cancellationToken);
+            if (factor is null)
+                return Results.NotFound();
+
+            dbContext.RepositoryPriorityFactors.Remove(factor);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await NormalizeRepositoryPriorityFactorSortOrderAsync(profileId, dbContext, cancellationToken);
+            CreateLogger(loggerFactory).LogInformation("RepositoryPriorityFactorDeleted for {ProfileId}: {FactorId}.", profileId, factorId);
             return Results.NoContent();
+        });
+
+        group.MapPut("/profiles/{profileId:guid}/repository-priority-factors/order", async (
+            Guid profileId,
+            ReorderRepositoryPriorityFactorsRequest request,
+            AppDbContext dbContext,
+            CancellationToken cancellationToken) =>
+        {
+            var factors = await dbContext.RepositoryPriorityFactors
+                .Where(factor => factor.ProfileId == profileId)
+                .ToListAsync(cancellationToken);
+            if (factors.Count != request.FactorIds.Count || factors.Select(factor => factor.Id).Except(request.FactorIds).Any())
+                return ValidationProblem([new ValidationIssue("factorIds", "The reorder list must contain every factor exactly once.")]);
+
+            await ApplyRepositoryPriorityFactorOrderAsync(factors, request.FactorIds, dbContext, cancellationToken);
+            return Results.Ok(factors.OrderBy(factor => factor.SortOrder).Select(RepositoryPriorityFactorResponse.FromEntity).ToList());
         });
     }
 
@@ -846,18 +1098,22 @@ public static class ProfileEndpoints
             var profile = await dbContext.TaskProfiles
                 .Include(candidate => candidate.Repositories)
                 .ThenInclude(repository => repository.RepositoryTier)
+                .Include(candidate => candidate.Repositories)
+                .ThenInclude(repository => repository.FactorRatings)
+                .Include(candidate => candidate.RepositoryPriorityFactors)
                 .Include(candidate => candidate.Labels)
                 .FirstOrDefaultAsync(candidate => candidate.Id == profileId, cancellationToken);
             if (profile is null)
                 return Results.NotFound();
+
+            var refresh = ReadRefreshQuery(httpContext);
             if (profile.Repositories.Count == 0)
-                return ValidationProblem([new ValidationIssue("repositories", "Add at least one repository before discovering labels.")]);
+                return await ClearDiscoveredLabelsAsync(profile, refresh, dbContext, logger, cancellationToken);
 
             var token = secretProtector.Unprotect(profile.EncryptedGitHubToken);
             if (string.IsNullOrWhiteSpace(token))
                 return ValidationProblem([new ValidationIssue("githubToken", "GitHub token is required before discovering labels.")]);
 
-            var refresh = ReadRefreshQuery(httpContext);
             var requestTimeout = ReadPositiveTimeout(
                 configuration,
                 "GitHub:RequestTimeoutSeconds",
@@ -1020,10 +1276,117 @@ public static class ProfileEndpoints
             .Select(ProfileLabelResponse.FromEntity)
             .ToList();
 
+    private static async Task<IResult> ClearDiscoveredLabelsAsync(
+        TaskProfile profile,
+        bool refresh,
+        AppDbContext dbContext,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        var discoveredAt = DateTimeOffset.UtcNow;
+        var removedLabelCount = profile.Labels.Count;
+        dbContext.ProfileLabels.RemoveRange(profile.Labels);
+        profile.Labels.Clear();
+        profile.UpdatedAt = discoveredAt;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        logger.LogInformation(
+            "ProfileLabelDiscoverySkipped for {ProfileId} because no repositories are configured; removed {RemovedLabelCount} label(s).",
+            profile.Id,
+            removedLabelCount);
+
+        var cache = new GitHubCacheSummary(
+            "disabled",
+            Enabled: false,
+            RefreshRequested: refresh,
+            DurationSeconds: 0,
+            HitCount: 0,
+            GitHubRequestCount: 0,
+            OperationCount: 0,
+            Operations: []);
+        var quota = new GitHubQuotaSummary(
+            "unknown",
+            ProtectionEnabled: true,
+            ReserveRequests: 0,
+            WarningRemaining: 0,
+            EstimatedRequiredRequests: 0,
+            ActualGitHubRequestCount: 0,
+            Limit: null,
+            Remaining: null,
+            Used: null,
+            ResetAt: null,
+            ResetInSeconds: null,
+            Source: "unavailable");
+
+        return Results.Ok(new LabelDiscoveryResponse(
+            [],
+            NewLabelCount: 0,
+            removedLabelCount,
+            TaskRunCacheResponse.FromSummary(cache),
+            TaskRunQuotaResponse.FromSummary(quota),
+            discoveredAt));
+    }
+
     private static async Task<RepositoryTier?> ResolveTierAsync(Guid? repositoryTierId, AppDbContext dbContext, CancellationToken cancellationToken) =>
         repositoryTierId is { } id
             ? await dbContext.RepositoryTiers.FirstOrDefaultAsync(tier => tier.Id == id, cancellationToken)
             : await dbContext.RepositoryTiers.FirstOrDefaultAsync(tier => tier.IsDefault, cancellationToken);
+
+    private static async Task<ProfileDetailResponse?> LoadProfileDetailResponseAsync(
+        Guid profileId,
+        AppDbContext dbContext,
+        CancellationToken cancellationToken)
+    {
+        var profile = await dbContext.TaskProfiles
+            .AsNoTracking()
+            .Include(candidate => candidate.Repositories)
+            .ThenInclude(repository => repository.RepositoryTier)
+            .Include(candidate => candidate.Repositories)
+            .ThenInclude(repository => repository.FactorRatings)
+            .Include(candidate => candidate.RepositoryPriorityFactors)
+            .Include(candidate => candidate.Labels)
+            .FirstOrDefaultAsync(candidate => candidate.Id == profileId, cancellationToken);
+
+        return profile is null ? null : ProfileDetailResponse.FromEntity(profile);
+    }
+
+    private static async Task NormalizeRepositoryPriorityFactorSortOrderAsync(Guid profileId, AppDbContext dbContext, CancellationToken cancellationToken)
+    {
+        var factors = await dbContext.RepositoryPriorityFactors
+            .Where(factor => factor.ProfileId == profileId)
+            .OrderBy(factor => factor.SortOrder)
+            .ToListAsync(cancellationToken);
+        await ApplyRepositoryPriorityFactorOrderAsync(factors, factors.Select(factor => factor.Id).ToList(), dbContext, cancellationToken);
+    }
+
+    private static async Task ApplyRepositoryPriorityFactorOrderAsync(
+        IReadOnlyList<RepositoryPriorityFactor> factors,
+        IReadOnlyList<Guid> orderedFactorIds,
+        AppDbContext dbContext,
+        CancellationToken cancellationToken)
+    {
+        if (factors.Count == 0)
+            return;
+
+        var now = DateTimeOffset.UtcNow;
+        var temporaryOffset = factors.Max(factor => factor.SortOrder) + factors.Count + 1;
+        foreach (var factor in factors)
+        {
+            factor.SortOrder += temporaryOffset;
+            factor.RowVersion++;
+            factor.UpdatedAt = now;
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        for (var index = 0; index < orderedFactorIds.Count; index++)
+        {
+            var factor = factors.Single(candidate => candidate.Id == orderedFactorIds[index]);
+            factor.SortOrder = index;
+            factor.RowVersion++;
+            factor.UpdatedAt = now;
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
 
     private static async Task NormalizeRepositorySortOrderAsync(Guid profileId, AppDbContext dbContext, CancellationToken cancellationToken)
     {
@@ -1054,16 +1417,45 @@ public static class ProfileEndpoints
     {
         var normalizedOwner = owner?.Trim().ToLowerInvariant();
         var normalizedName = name?.Trim().ToLowerInvariant();
-        return string.IsNullOrWhiteSpace(normalizedOwner) || string.IsNullOrWhiteSpace(normalizedName)
-               || normalizedOwner.Contains('/') || normalizedName.Contains('/')
+        return !IsRepositoryCoordinatePart(normalizedOwner) || !IsRepositoryCoordinatePart(normalizedName)
             ? null
-            : (normalizedOwner, normalizedName);
+            : (normalizedOwner!, normalizedName!);
     }
+
+    private static bool IsRepositoryCoordinatePart(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Length <= 100
+        && value.All(character =>
+            character is >= 'a' and <= 'z'
+            || character is >= '0' and <= '9'
+            || character is '.' or '_' or '-');
 
     private static string? NormalizeTierName(string? name)
     {
         var normalizedName = name?.Trim().ToLowerInvariant();
         return string.IsNullOrWhiteSpace(normalizedName) || normalizedName.Length > 80 ? null : normalizedName;
+    }
+
+    private static string? NormalizeFactorName(string? name)
+    {
+        var normalizedName = name?.Trim().ToLowerInvariant();
+        return string.IsNullOrWhiteSpace(normalizedName) || normalizedName.Length > 80 ? null : normalizedName;
+    }
+
+    private static IReadOnlyList<ValidationIssue> ValidateRepositoryPriorityFactorRequest(
+        SaveRepositoryPriorityFactorRequest request,
+        bool requireRowVersion = false)
+    {
+        var errors = new List<ValidationIssue>();
+        if (NormalizeFactorName(request.Name) is null)
+            errors.Add(new ValidationIssue("name", "Factor name is required and must be 80 characters or fewer."));
+        if ((request.Description ?? string.Empty).Trim().Length > 500)
+            errors.Add(new ValidationIssue("description", "Factor description must be 500 characters or fewer."));
+        if (request.Weight is < -1000 or > 1000)
+            errors.Add(new ValidationIssue("weight", "Factor weight must be between -1000 and 1000."));
+        if (requireRowVersion && request.RowVersion is null)
+            errors.Add(new ValidationIssue("rowVersion", "Row version is required."));
+        return errors;
     }
 
     private static bool HasJsonBody(HttpRequest request) =>

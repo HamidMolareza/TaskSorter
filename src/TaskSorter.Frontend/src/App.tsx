@@ -8,39 +8,53 @@ import {
 } from '@mui/material'
 import {
   ArrowDown, ArrowUp, Check, ChevronDown, Database, ExternalLink, FolderGit2, KeyRound, Play, Plus, RefreshCcw,
-  GripVertical, Settings2, Tags, Trash2, X,
+  GripVertical, Info, Monitor, Moon, Settings2, Sun, Tags, Trash2, X,
 } from 'lucide-react'
 import { DndContext, PointerSensor, closestCenter, useDraggable, useDroppable, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { api } from './api'
+import { ApiRequestError, api, validationMessagesOf } from './api'
 import type {
-  LabelDiscovery, ProfileDetail, ProfileDraft, ProfileLabel, ProfileRepository, ProfileSummary, RepositoryTier, TaskItem,
+  LabelDiscovery, ProfileDetail, ProfileDraft, ProfileLabel, ProfileRepository, ProfileSummary, RepositoryPriorityFactor, RepositoryTier,
+  RepositoryValidationIssue, TaskItem,
   TaskPriorityFactors, TaskRunCache, TaskRunProgressEvent, TaskRunQuota,
 } from './types'
+import type { ThemePreference } from './theme'
 
 const defaultPriorityFactors: TaskPriorityFactors = { assignmentBonus: 20, lockPenalty: -100 }
 const emptyDraft: ProfileDraft = {
   name: '', labelLines: '', taskLimit: 10, delayInMilliseconds: 500,
-  priorityFactors: defaultPriorityFactors, repositories: [], labels: [],
+  priorityFactors: defaultPriorityFactors, repositoryPriorityFactors: [], repositories: [], labels: [],
 }
-const tabs = ['Repositories', 'Labels', 'Scoring', 'Ranked Queue', 'Cache', 'Settings']
+const tabs = ['Factors', 'Repositories', 'Labels', 'Scoring', 'Ranked Queue', 'Cache', 'Settings']
+const tabSlugs = ['factors', 'repositories', 'labels', 'scoring', 'queue', 'cache', 'settings']
 
 type ConfirmAction = { title: string; message: string; confirmLabel: string; run: () => Promise<void> } | null
+type PendingRatingUpdate = { profileId: string; repositoryId: string; factorId: string; rating: number; rowVersion: number }
+type AppProps = {
+  themePreference?: ThemePreference
+  onThemePreferenceChange?: (preference: ThemePreference) => void
+}
+const themeOptions: { value: ThemePreference; label: string }[] = [
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+  { value: 'system', label: 'System' },
+]
 
-export function App() {
+export function App({ themePreference = 'system', onThemePreferenceChange = () => {} }: AppProps) {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([])
   const [tiers, setTiers] = useState<RepositoryTier[]>([])
   const [selectedProfileId, setSelectedProfileId] = useState('')
   const [draft, setDraft] = useState<ProfileDraft>(emptyDraft)
   const [token, setToken] = useState('')
-  const [activeTab, setActiveTab] = useState(0)
+  const [activeTab, setActiveTab] = useState(() => tabIndexFromLocation())
   const [status, setStatus] = useState('Loading')
   const [error, setError] = useState('')
   const [isBusy, setIsBusy] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [tierActionId, setTierActionId] = useState('')
   const [profileMenuAnchor, setProfileMenuAnchor] = useState<HTMLElement | null>(null)
+  const [themeMenuAnchor, setThemeMenuAnchor] = useState<HTMLElement | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [newProfileName, setNewProfileName] = useState('')
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null)
@@ -50,10 +64,27 @@ export function App() {
   const [quota, setQuota] = useState<TaskRunQuota | null>(null)
   const [progress, setProgress] = useState<TaskRunProgressEvent[]>([])
   const [labelDiscovery, setLabelDiscovery] = useState<LabelDiscovery | null>(null)
+  const [isDiscoveringLabels, setIsDiscoveringLabels] = useState(false)
+  const [pendingRatingCount, setPendingRatingCount] = useState(0)
   const labelDiscoverySignatures = useRef(new Map<string, string>())
   const autosaveTimer = useRef<number | undefined>(undefined)
+  const pendingRatingUpdates = useRef<PendingRatingUpdate[]>([])
 
   useEffect(() => { void loadInitial() }, [])
+
+  useEffect(() => {
+    function syncTabFromHistory() {
+      setActiveTab(tabIndexFromLocation())
+    }
+    window.addEventListener('popstate', syncTabFromHistory)
+    return () => window.removeEventListener('popstate', syncTabFromHistory)
+  }, [])
+
+  useEffect(() => {
+    function flush() { void flushPendingRatingUpdates() }
+    window.addEventListener('online', flush)
+    return () => window.removeEventListener('online', flush)
+  }, [])
 
   useEffect(() => {
     if (!selectedProfileId) return
@@ -75,6 +106,11 @@ export function App() {
     }
   }, [draft.name, draft.labelLines, draft.taskLimit, draft.delayInMilliseconds, draft.priorityFactors, token])
 
+  function changeTab(index: number, replace = false) {
+    setActiveTab(index)
+    updateTabUrl(index, replace)
+  }
+
   const repositorySignature = draft.repositories
     .map((repository) => `${repository.id}:${repository.owner}/${repository.name}:${repository.repositoryTierId}:${repository.sortOrder}`)
     .join('|')
@@ -89,7 +125,7 @@ export function App() {
     if (previousSignature === discoverySignature)
       return
 
-    if (previousSignature === undefined && activeTab !== 1)
+    if (previousSignature === undefined && activeTab !== 2)
       return
 
     labelDiscoverySignatures.current.set(draft.id, discoverySignature)
@@ -118,8 +154,9 @@ export function App() {
   }
 
   async function discoverLabels(refresh = false) {
-    if (!draft.id)
+    if (!draft.id || isDiscoveringLabels)
       return
+    setIsDiscoveringLabels(true)
     try {
       const result = await api.discoverProfileLabels(draft.id, refresh)
       setLabelDiscovery(result)
@@ -128,10 +165,10 @@ export function App() {
         result.newLabelCount > 0 ? `${result.newLabelCount} new label${result.newLabelCount === 1 ? '' : 's'} need ranking` : '',
         result.removedLabelCount > 0 ? `${result.removedLabelCount} stale label${result.removedLabelCount === 1 ? '' : 's'} removed` : '',
       ].filter(Boolean).join('; ')
-      setStatus(changes || `Labels checked from ${result.cache.status}`)
+      setStatus(changes || (draft.repositories.length === 0 ? 'No repositories configured; labels are already clear' : `Labels checked from ${result.cache.status}`))
     } catch (reason) {
       setError(messageOf(reason))
-    }
+    } finally { setIsDiscoveringLabels(false) }
   }
 
   async function updateLabel(label: ProfileLabel, isIgnored: boolean) {
@@ -253,7 +290,7 @@ export function App() {
       setCache(result.cache)
       setQuota(result.quota)
       setStatus(`${result.items.length} ranked task${result.items.length === 1 ? '' : 's'}`)
-      setActiveTab(3)
+      changeTab(4)
     } catch (reason) { setError(messageOf(reason)) } finally { setIsBusy(false) }
   }
 
@@ -269,12 +306,21 @@ export function App() {
   }
 
   async function updateRepository(repository: ProfileRepository, owner: string, name: string, repositoryTierId: string) {
-    if (!draft.id) return
+    if (!draft.id) return []
     try {
-      const saved = await api.updateProfileRepository(draft.id, repository.id, { owner, name, repositoryTierId })
+      const saved = await api.updateProfileRepository(draft.id, repository.id, { owner, name, repositoryTierId, rowVersion: repository.rowVersion })
       setDraft((current) => ({ ...current, repositories: current.repositories.map((candidate) => candidate.id === saved.id ? saved : candidate) }))
       setStatus('Repository saved automatically')
-    } catch (reason) { setError(messageOf(reason)) }
+      return []
+    } catch (reason) {
+      if (handleProfileConflict(reason))
+        return ['This repository was refreshed from the server. Review the latest values before editing again.']
+      const validationMessages = validationMessagesOf(reason)
+      if (validationMessages.length > 0)
+        return validationMessages
+      setError(messageOf(reason))
+      return [messageOf(reason)]
+    }
   }
 
   async function deleteRepository(repository: ProfileRepository) {
@@ -284,29 +330,113 @@ export function App() {
     setStatus('Repository removed')
   }
 
-  async function moveRepository(index: number, direction: -1 | 1) {
+  async function createFactor(name: string, description: string, weight: number) {
     if (!draft.id) return
-    const next = [...draft.repositories]
-    const target = index + direction
-    if (!next[target]) return
-    ;[next[index], next[target]] = [next[target], next[index]]
-    await reorderRepositories(next)
+    try {
+      await api.createRepositoryPriorityFactor(draft.id, { name, description, weight })
+      await refreshProfile()
+      setStatus('Factor created')
+    } catch (reason) { setError(messageOf(reason)) }
   }
 
-  async function reorderRepositories(next: ProfileRepository[]) {
+  async function updateFactor(factor: RepositoryPriorityFactor, name: string, description: string, weight: number) {
     if (!draft.id) return
-    setDraft((current) => ({ ...current, repositories: next }))
     try {
-      await api.reorderProfileRepositories(draft.id, next.map((repository) => repository.id))
-      await refreshProfile()
-      setStatus('Repository order saved automatically')
-    } catch (reason) { setError(messageOf(reason)); await refreshProfile() }
+      const saved = await api.updateRepositoryPriorityFactor(draft.id, factor.id, { name, description, weight, rowVersion: factor.rowVersion })
+      setDraft((current) => ({
+        ...current,
+        repositoryPriorityFactors: current.repositoryPriorityFactors.map((candidate) => candidate.id === saved.id ? saved : candidate),
+        repositories: recalculateRepositories(current.repositories, current.repositoryPriorityFactors.map((candidate) => candidate.id === saved.id ? saved : candidate)),
+      }))
+      setStatus('Factor saved automatically')
+    } catch (reason) { handleProfileConflict(reason); setError(messageOf(reason)) }
+  }
+
+  async function deleteFactor(factor: RepositoryPriorityFactor) {
+    if (!draft.id) return
+    await api.deleteRepositoryPriorityFactor(draft.id, factor.id)
+    await refreshProfile()
+    setStatus('Factor removed')
+  }
+
+  async function reorderFactors(factorIds: string[]) {
+    if (!draft.id) return
+    try {
+      const saved = await api.reorderRepositoryPriorityFactors(draft.id, factorIds)
+      setDraft((current) => ({ ...current, repositoryPriorityFactors: saved }))
+      setStatus('Factor order saved automatically')
+    } catch (reason) { handleProfileConflict(reason); setError(messageOf(reason)) }
+  }
+
+  async function updateRepositoryRating(repository: ProfileRepository, factor: RepositoryPriorityFactor, rating: number) {
+    if (!draft.id) return
+    const existing = repository.ratings.find((candidate) => candidate.repositoryPriorityFactorId === factor.id)
+    const rowVersion = existing?.rowVersion ?? 0
+    const update: PendingRatingUpdate = { profileId: draft.id, repositoryId: repository.id, factorId: factor.id, rating, rowVersion }
+    const previousRepositories = draft.repositories
+    setDraft((current) => ({ ...current, repositories: applyRepositoryRating(current.repositories, current.repositoryPriorityFactors, repository.id, factor.id, rating, rowVersion) }))
+    try {
+      const saved = await retryRequest(() => api.updateRepositoryFactorRating(update.profileId, update.repositoryId, update.factorId, { rating: update.rating, rowVersion: update.rowVersion }))
+      setDraft((current) => ({ ...current, repositories: applyRepositoryRating(current.repositories, current.repositoryPriorityFactors, repository.id, factor.id, saved.rating, saved.rowVersion) }))
+      setStatus('Rating saved automatically')
+    } catch (reason) {
+      if (isOfflineError(reason)) {
+        queuePendingRating(update)
+        setStatus('Connection lost; rating changes are pending')
+        return
+      }
+
+      if (handleProfileConflict(reason))
+        return
+
+      setDraft((current) => ({ ...current, repositories: previousRepositories }))
+      setError(messageOf(reason))
+    }
+  }
+
+  function queuePendingRating(update: PendingRatingUpdate) {
+    pendingRatingUpdates.current = pendingRatingUpdates.current
+      .filter((candidate) => !(candidate.repositoryId === update.repositoryId && candidate.factorId === update.factorId))
+      .concat(update)
+    setPendingRatingCount(pendingRatingUpdates.current.length)
+  }
+
+  async function flushPendingRatingUpdates() {
+    if (pendingRatingUpdates.current.length === 0)
+      return
+    const pending = [...pendingRatingUpdates.current]
+    pendingRatingUpdates.current = []
+    setPendingRatingCount(0)
+    for (const update of pending) {
+      try {
+        const saved = await retryRequest(() => api.updateRepositoryFactorRating(update.profileId, update.repositoryId, update.factorId, { rating: update.rating, rowVersion: update.rowVersion }))
+        setDraft((current) => ({ ...current, repositories: applyRepositoryRating(current.repositories, current.repositoryPriorityFactors, update.repositoryId, update.factorId, saved.rating, saved.rowVersion) }))
+      } catch (reason) {
+        if (isOfflineError(reason)) {
+          queuePendingRating(update)
+          setStatus('Connection lost; rating changes are pending')
+          return
+        }
+        handleProfileConflict(reason)
+        setError(messageOf(reason))
+      }
+    }
+    setStatus('Pending rating changes saved')
+  }
+
+  function handleProfileConflict(reason: unknown) {
+    const latestProfile = latestProfileFrom(reason)
+    if (!latestProfile)
+      return false
+    setDraft(profileToDraft(latestProfile))
+    setStatus('Server data changed; latest profile loaded')
+    return true
   }
 
   async function refreshTiers() { setTiers(await api.getRepositoryTiers()) }
   async function updateTier(tier: RepositoryTier, name: string, score: number) {
     try {
-      await api.updateRepositoryTier(tier.id, { name, score })
+      await api.updateRepositoryTier(tier.id, { name, score, rowVersion: tier.rowVersion })
       await Promise.all([refreshTiers(), refreshProfile()])
       setStatus('Tier saved automatically')
     } catch (reason) { setError(messageOf(reason)) }
@@ -339,19 +469,33 @@ export function App() {
       <Stack spacing={2.5} sx={{ maxWidth: 1500, mx: 'auto' }}>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ justifyContent: 'space-between', alignItems: { md: 'center' } }}>
           <Box><Typography variant="overline" color="primary" sx={{ fontWeight: 800, letterSpacing: 0 }}>TaskSorter</Typography><Typography variant="h1">Project queue</Typography></Box>
-          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center' }}><Chip label={status} variant="outlined" /><Chip icon={<Check size={15} />} label={saveState} color={isSaving ? 'warning' : 'success'} variant="outlined" /><Tooltip title="Switch profile"><span><IconButton aria-label="Open profile menu" onClick={(event) => setProfileMenuAnchor(event.currentTarget)} disabled={!activeProfile || isBusy || isSaving}><Avatar sx={{ width: 34, height: 34, bgcolor: 'primary.main', fontSize: 14, fontWeight: 700 }}>{profileInitials(draft.name || activeProfile?.name)}</Avatar></IconButton></span></Tooltip></Stack>
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'center' }}>
+            <Chip label={status} variant="outlined" />
+            <Chip icon={<Check size={15} />} label={saveState} color={isSaving ? 'warning' : 'success'} variant="outlined" />
+            <Tooltip title="Theme">
+              <IconButton aria-label={`Open theme menu (${themeLabel(themePreference)})`} onClick={(event) => setThemeMenuAnchor(event.currentTarget)}>
+                {themeIcon(themePreference, 18)}
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Switch profile"><span><IconButton aria-label="Open profile menu" onClick={(event) => setProfileMenuAnchor(event.currentTarget)} disabled={!activeProfile || isBusy || isSaving}><Avatar sx={{ width: 34, height: 34, bgcolor: 'primary.main', fontSize: 14, fontWeight: 700 }}>{profileInitials(draft.name || activeProfile?.name)}</Avatar></IconButton></span></Tooltip>
+          </Stack>
         </Stack>
         {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
-        <Tabs value={activeTab} onChange={(_, value) => setActiveTab(value)} variant="scrollable" scrollButtons="auto" aria-label="TaskSorter workspace tabs">
+        <Tabs value={activeTab} onChange={(_, value) => changeTab(value)} variant="scrollable" scrollButtons="auto" aria-label="TaskSorter workspace tabs">
           {tabs.map((tab) => <Tab key={tab} label={tab} />)}
         </Tabs>
-        {activeTab === 0 && <RepositoriesTab repositories={draft.repositories} tiers={tiers} enabled={Boolean(draft.id)} defaultTierId={defaultTier?.id} onAdd={addRepository} onUpdate={updateRepository} onMove={moveRepository} onReorder={reorderRepositories} onDelete={(repository) => setConfirmAction({ title: 'Remove repository?', message: `Remove ${repository.fullName} from this profile?`, confirmLabel: 'Remove repository', run: () => deleteRepository(repository) })} />}
-        {activeTab === 1 && <LabelsTab labels={draft.labels} discovery={labelDiscovery} enabled={Boolean(draft.id)} hasToken={hasStoredToken} onDiscover={(refresh) => void discoverLabels(refresh)} onUpdate={updateLabel} onReorder={saveLabelOrder} />}
-        {activeTab === 2 && <ScoringTab tiers={tiers} factors={draft.priorityFactors} defaultActionId={tierActionId} onFactors={(priorityFactors) => setDraft((current) => ({ ...current, priorityFactors }))} onCreate={createTier} onUpdate={updateTier} onDefault={setDefaultTier} onDelete={(tier) => setConfirmAction({ title: 'Delete repository tier?', message: tier.assignedRepositoryCount ? `${tier.assignedRepositoryCount} repository assignment(s) use ${tier.name}. They will move to the default tier.` : `Delete ${tier.name}?`, confirmLabel: tier.assignedRepositoryCount ? 'Reassign and delete' : 'Delete tier', run: async () => { await api.deleteRepositoryTier(tier.id, tier.assignedRepositoryCount > 0); await Promise.all([refreshTiers(), refreshProfile()]) } })} />}
-        {activeTab === 3 && <QueueTab draft={draft} tasks={tasks} warnings={warnings} progress={progress} cache={cache} quota={quota} busy={isBusy} hasToken={hasStoredToken || Boolean(token)} onUpdate={(patch) => setDraft((current) => ({ ...current, ...patch }))} onRun={() => void runProfile()} onRefresh={() => void runProfile(true)} />}
-        {activeTab === 4 && <CacheTab cache={cache} quota={quota} canRun={Boolean(draft.id)} busy={isBusy} onRefresh={() => void runProfile(true)} />}
-        {activeTab === 5 && <SettingsTab draft={draft} token={token} hasToken={hasStoredToken} busy={isBusy} onUpdate={(patch) => setDraft((current) => ({ ...current, ...patch }))} onToken={setToken} onDelete={() => setConfirmAction({ title: 'Delete profile?', message: `Delete ${draft.name}? Its repository assignments cannot be recovered.`, confirmLabel: 'Delete profile', run: deleteProfile })} />}
+        {pendingRatingCount > 0 && <Alert severity="warning">{pendingRatingCount} rating change{pendingRatingCount === 1 ? '' : 's'} pending until the connection recovers.</Alert>}
+        {activeTab === 0 && <FactorsTab factors={draft.repositoryPriorityFactors} enabled={Boolean(draft.id)} onCreate={createFactor} onUpdate={updateFactor} onReorder={reorderFactors} onDelete={(factor) => setConfirmAction({ title: 'Remove factor?', message: `Remove ${factor.name}? Repository scores will be recalculated without it.`, confirmLabel: 'Remove factor', run: () => deleteFactor(factor) })} />}
+        {activeTab === 1 && <RepositoriesTab repositories={draft.repositories} factors={draft.repositoryPriorityFactors} tiers={tiers} enabled={Boolean(draft.id)} defaultTierId={defaultTier?.id} onAdd={addRepository} onUpdate={updateRepository} onRating={updateRepositoryRating} onDelete={(repository) => setConfirmAction({ title: 'Remove repository?', message: `Remove ${repository.fullName} from this profile?`, confirmLabel: 'Remove repository', run: () => deleteRepository(repository) })} />}
+        {activeTab === 2 && <LabelsTab labels={draft.labels} discovery={labelDiscovery} discovering={isDiscoveringLabels} enabled={Boolean(draft.id)} hasToken={hasStoredToken} onDiscover={(refresh) => void discoverLabels(refresh)} onUpdate={updateLabel} onReorder={saveLabelOrder} />}
+        {activeTab === 3 && <ScoringTab tiers={tiers} factors={draft.priorityFactors} defaultActionId={tierActionId} onFactors={(priorityFactors) => setDraft((current) => ({ ...current, priorityFactors }))} onCreate={createTier} onUpdate={updateTier} onDefault={setDefaultTier} onDelete={(tier) => setConfirmAction({ title: 'Delete repository tier?', message: tier.assignedRepositoryCount ? `${tier.assignedRepositoryCount} repository assignment(s) use ${tier.name}. They will move to the default tier.` : `Delete ${tier.name}?`, confirmLabel: tier.assignedRepositoryCount ? 'Reassign and delete' : 'Delete tier', run: async () => { await api.deleteRepositoryTier(tier.id, tier.assignedRepositoryCount > 0); await Promise.all([refreshTiers(), refreshProfile()]) } })} />}
+        {activeTab === 4 && <QueueTab draft={draft} tasks={tasks} warnings={warnings} progress={progress} cache={cache} quota={quota} busy={isBusy} hasToken={hasStoredToken || Boolean(token)} onUpdate={(patch) => setDraft((current) => ({ ...current, ...patch }))} onRun={() => void runProfile()} onRefresh={() => void runProfile(true)} />}
+        {activeTab === 5 && <CacheTab cache={cache} quota={quota} canRun={Boolean(draft.id)} busy={isBusy} onRefresh={() => void runProfile(true)} />}
+        {activeTab === 6 && <SettingsTab draft={draft} token={token} hasToken={hasStoredToken} busy={isBusy} onUpdate={(patch) => setDraft((current) => ({ ...current, ...patch }))} onToken={setToken} onDelete={() => setConfirmAction({ title: 'Delete profile?', message: `Delete ${draft.name}? Its repository assignments cannot be recovered.`, confirmLabel: 'Delete profile', run: deleteProfile })} />}
       </Stack>
+      <Menu id="theme-menu" anchorEl={themeMenuAnchor} open={Boolean(themeMenuAnchor)} onClose={() => setThemeMenuAnchor(null)}>
+        {themeOptions.map((option) => <MenuItem key={option.value} selected={themePreference === option.value} onClick={() => { setThemeMenuAnchor(null); onThemePreferenceChange(option.value) }}><ListItemIcon>{themeIcon(option.value, 17)}</ListItemIcon>{option.label}</MenuItem>)}
+      </Menu>
       <Menu id="profile-menu" anchorEl={profileMenuAnchor} open={Boolean(profileMenuAnchor)} onClose={() => setProfileMenuAnchor(null)}>
         <Box sx={{ px: 2, py: 1.25, minWidth: 240 }}><Typography variant="caption" color="text.secondary">Current profile</Typography><Typography sx={{ fontWeight: 700 }}>{draft.name || activeProfile?.name || 'No profile selected'}</Typography></Box>
         <Divider />
@@ -379,47 +523,118 @@ function SettingsTab(props: { draft: ProfileDraft; token: string; hasToken: bool
   </Stack>
 }
 
-function RepositoriesTab(props: { repositories: ProfileRepository[]; tiers: RepositoryTier[]; enabled: boolean; defaultTierId?: string; onAdd: (fullName: string, tierId: string) => Promise<void>; onUpdate: (repository: ProfileRepository, owner: string, name: string, tierId: string) => Promise<void>; onMove: (index: number, direction: -1 | 1) => Promise<void>; onReorder: (repositories: ProfileRepository[]) => Promise<void>; onDelete: (repository: ProfileRepository) => void }) {
-  const [newRepository, setNewRepository] = useState('')
-  const [tierId, setTierId] = useState('')
+function FactorsTab(props: { factors: RepositoryPriorityFactor[]; enabled: boolean; onCreate: (name: string, description: string, weight: number) => Promise<void>; onUpdate: (factor: RepositoryPriorityFactor, name: string, description: string, weight: number) => Promise<void>; onReorder: (factorIds: string[]) => Promise<void>; onDelete: (factor: RepositoryPriorityFactor) => void }) {
+  const [newName, setNewName] = useState('')
+  const [newDescription, setNewDescription] = useState('')
+  const [newWeight, setNewWeight] = useState(1)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
-  useEffect(() => { if (!tierId && props.defaultTierId) setTierId(props.defaultTierId) }, [props.defaultTierId, tierId])
+
   function handleDragEnd(event: DragEndEvent) {
     if (!event.over || event.active.id === event.over.id)
       return
     const movingId = String(event.active.id)
-    const next = props.repositories.filter((repository) => repository.id !== movingId)
-    const moving = props.repositories.find((repository) => repository.id === movingId)
+    const moving = props.factors.find((factor) => factor.id === movingId)
     if (!moving)
       return
-    const overId = String(event.over.id)
-    const targetIndex = overId === 'repository-list-end' ? next.length : next.findIndex((repository) => repository.id === overId)
+    const next = props.factors.filter((factor) => factor.id !== movingId)
+    const targetIndex = next.findIndex((factor) => factor.id === String(event.over?.id))
     if (targetIndex < 0)
       return
     next.splice(targetIndex, 0, moving)
-    void props.onReorder(next)
+    void props.onReorder(next.map((factor) => factor.id))
   }
 
-  return <Stack spacing={2}><Card variant="outlined"><CardContent><Stack spacing={2}><SectionTitle icon={<FolderGit2 size={20} />} title="Repositories" /><Stack direction={{ xs: 'column', md: 'row' }} spacing={1}><TextField label="owner/repository" value={newRepository} disabled={!props.enabled} onChange={(event) => setNewRepository(event.target.value)} fullWidth /><TextField select label="Tier" value={tierId} disabled={!props.enabled || !props.tiers.length} onChange={(event) => setTierId(event.target.value)} sx={{ minWidth: 190 }}>{props.tiers.map((tier) => <MenuItem key={tier.id} value={tier.id}>{tier.name} ({tier.score})</MenuItem>)}</TextField><Button variant="contained" startIcon={<Plus size={17} />} disabled={!props.enabled || !newRepository || !tierId} onClick={() => void props.onAdd(newRepository, tierId).then(() => setNewRepository(''))}>Add</Button></Stack><Typography variant="body2" color="text.secondary">Drag rows or use the move controls to rank repositories from top to bottom. Valid changes save automatically.</Typography></Stack></CardContent></Card><DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}><Card variant="outlined"><TableContainer><SortableContext items={props.repositories.map((repository) => repository.id)} strategy={verticalListSortingStrategy}><Table size="small"><TableHead><TableRow><TableCell width={132}>Order</TableCell><TableCell>Repository</TableCell><TableCell>Tier</TableCell><TableCell align="right">Calculated priority</TableCell><TableCell>Validation</TableCell><TableCell width={54} /></TableRow></TableHead><TableBody>{props.repositories.map((repository, index) => <RepositoryRow key={repository.id} repository={repository} tiers={props.tiers} index={index} first={index === 0} last={index === props.repositories.length - 1} onUpdate={props.onUpdate} onMove={props.onMove} onDelete={props.onDelete} />)}{props.repositories.length === 0 ? <TableRow><TableCell colSpan={6}><Typography color="text.secondary">Add at least one repository before running this profile.</Typography></TableCell></TableRow> : <RepositoryDropZone />}</TableBody></Table></SortableContext></TableContainer></Card></DndContext></Stack>
+  return <Stack spacing={2}>
+    <Card variant="outlined"><CardContent><Stack spacing={2}>
+      <SectionTitle icon={<Settings2 size={20} />} title="Repository factors" />
+      <Box sx={{ display: 'grid', gap: 1.25, gridTemplateColumns: { xs: '1fr', md: 'minmax(220px, 1fr) 120px auto' }, alignItems: 'start' }}>
+        <TextField label="Factor name" value={newName} disabled={!props.enabled} onChange={(event) => setNewName(event.target.value.slice(0, 80))} fullWidth />
+        <TextField label="Weight" type="number" value={newWeight} disabled={!props.enabled} onChange={(event) => setNewWeight(Number(event.target.value))} sx={{ width: { xs: '100%', md: 120 } }} />
+        <Button variant="contained" startIcon={<Plus size={17} />} disabled={!props.enabled || !newName.trim()} onClick={() => void props.onCreate(newName, newDescription, newWeight).then(() => { setNewName(''); setNewDescription(''); setNewWeight(1) })} sx={{ minHeight: 40, alignSelf: 'start' }}>Add</Button>
+        <TextField label="Description" value={newDescription} disabled={!props.enabled} onChange={(event) => setNewDescription(event.target.value.slice(0, 500))} multiline minRows={3} maxRows={8} fullWidth helperText={`${newDescription.length}/500`} sx={{ gridColumn: { md: '1 / -1' } }} />
+      </Box>
+    </Stack></CardContent></Card>
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <Card variant="outlined"><TableContainer sx={{ overflowX: 'auto' }}><SortableContext items={props.factors.map((factor) => factor.id)} strategy={verticalListSortingStrategy}><Table size="small" sx={{ minWidth: 780 }}><TableHead><TableRow><TableCell width={52} /><TableCell sx={{ minWidth: 220 }}>Factor</TableCell><TableCell width={120}>Weight</TableCell><TableCell sx={{ minWidth: 360 }}>Description</TableCell><TableCell width={56} /></TableRow></TableHead><TableBody>{props.factors.map((factor) => <FactorRow key={factor.id} factor={factor} onUpdate={props.onUpdate} onDelete={props.onDelete} />)}{props.factors.length === 0 && <TableRow><TableCell colSpan={5}><Typography color="text.secondary">No repository factors configured. Repository scores currently use tier score only.</Typography></TableCell></TableRow>}</TableBody></Table></SortableContext></TableContainer></Card>
+    </DndContext>
+  </Stack>
 }
 
-function RepositoryRow(props: { repository: ProfileRepository; tiers: RepositoryTier[]; index: number; first: boolean; last: boolean; onUpdate: (repository: ProfileRepository, owner: string, name: string, tierId: string) => Promise<void>; onMove: (index: number, direction: -1 | 1) => Promise<void>; onDelete: (repository: ProfileRepository) => void }) {
-  const [owner, setOwner] = useState(props.repository.owner); const [name, setName] = useState(props.repository.name); const [tierId, setTierId] = useState(props.repository.repositoryTierId)
-  const sortable = useSortable({ id: props.repository.id })
+function FactorRow(props: { factor: RepositoryPriorityFactor; onUpdate: (factor: RepositoryPriorityFactor, name: string, description: string, weight: number) => Promise<void>; onDelete: (factor: RepositoryPriorityFactor) => void }) {
+  const [name, setName] = useState(props.factor.name)
+  const [description, setDescription] = useState(props.factor.description)
+  const [weight, setWeight] = useState(props.factor.weight)
+  const sortable = useSortable({ id: props.factor.id })
   const style = { transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition }
-  useEffect(() => { setOwner(props.repository.owner); setName(props.repository.name); setTierId(props.repository.repositoryTierId) }, [props.repository])
-  useEffect(() => { if (owner === props.repository.owner && name === props.repository.name && tierId === props.repository.repositoryTierId) return; if (!owner.trim() || !name.trim() || !tierId) return; const timer = window.setTimeout(() => { void props.onUpdate(props.repository, owner, name, tierId) }, 650); return () => window.clearTimeout(timer) }, [owner, name, tierId, props])
-  return <TableRow ref={sortable.setNodeRef} style={style} sx={{ opacity: sortable.isDragging ? 0.5 : 1 }}><TableCell><Stack direction="row"><Tooltip title="Drag repository"><IconButton aria-label={`Drag ${props.repository.fullName}`} size="small" {...sortable.attributes} {...sortable.listeners}><GripVertical size={17} /></IconButton></Tooltip><Tooltip title="Move up"><span><IconButton aria-label="Move repository up" size="small" disabled={props.first} onClick={() => void props.onMove(props.index, -1)}><ArrowUp size={16} /></IconButton></span></Tooltip><Tooltip title="Move down"><span><IconButton aria-label="Move repository down" size="small" disabled={props.last} onClick={() => void props.onMove(props.index, 1)}><ArrowDown size={16} /></IconButton></span></Tooltip></Stack></TableCell><TableCell><Stack direction="row" spacing={0.5}><TextField aria-label={`Owner for ${props.repository.fullName}`} size="small" value={owner} onChange={(event) => setOwner(event.target.value)} /><Typography sx={{ alignSelf: 'center' }}>/</Typography><TextField aria-label={`Repository for ${props.repository.fullName}`} size="small" value={name} onChange={(event) => setName(event.target.value)} /></Stack></TableCell><TableCell><TextField select aria-label={`Tier for ${props.repository.fullName}`} size="small" value={tierId} onChange={(event) => setTierId(event.target.value)} sx={{ minWidth: 160 }}>{props.tiers.map((tier) => <MenuItem key={tier.id} value={tier.id}>{tier.name} ({tier.score})</MenuItem>)}</TextField></TableCell><TableCell align="right"><Typography sx={{ fontWeight: 700 }}>{props.repository.priorityScore}</Typography><Typography variant="caption" color="text.secondary">tier {props.repository.repositoryTierScore} + order {props.repository.positionScore}</Typography></TableCell><TableCell>{props.repository.validation.length ? props.repository.validation.map((issue) => <Chip key={issue.message} color={issue.severity === 'error' ? 'error' : 'warning'} size="small" label={issue.message} />) : <Chip color="success" size="small" label="Valid" />}</TableCell><TableCell><Tooltip title="Remove repository"><IconButton aria-label="Remove repository" color="error" onClick={() => props.onDelete(props.repository)}><Trash2 size={17} /></IconButton></Tooltip></TableCell></TableRow>
+  useEffect(() => { setName(props.factor.name); setDescription(props.factor.description); setWeight(props.factor.weight) }, [props.factor])
+  useEffect(() => {
+    if (name === props.factor.name && description === props.factor.description && weight === props.factor.weight) return
+    if (!name.trim()) return
+    const timer = window.setTimeout(() => { void props.onUpdate(props.factor, name, description, weight) }, 650)
+    return () => window.clearTimeout(timer)
+  }, [name, description, weight, props])
+
+  return <TableRow ref={sortable.setNodeRef} style={style} sx={{ opacity: sortable.isDragging ? 0.5 : 1, verticalAlign: 'top' }}><TableCell sx={{ pt: 1.25 }}><Tooltip title="Drag factor"><IconButton aria-label={`Drag ${props.factor.name}`} size="small" {...sortable.attributes} {...sortable.listeners}><GripVertical size={17} /></IconButton></Tooltip></TableCell><TableCell sx={{ pt: 1.25 }}><TextField aria-label={`Factor name ${props.factor.name}`} size="small" value={name} onChange={(event) => setName(event.target.value.slice(0, 80))} fullWidth /></TableCell><TableCell sx={{ pt: 1.25 }}><TextField aria-label={`Factor weight ${props.factor.name}`} size="small" type="number" value={weight} onChange={(event) => setWeight(Number(event.target.value))} sx={{ width: 100 }} /></TableCell><TableCell><TextField aria-label={`Factor description ${props.factor.name}`} size="small" value={description} onChange={(event) => setDescription(event.target.value.slice(0, 500))} multiline minRows={2} maxRows={8} fullWidth helperText={`${description.length}/500`} /></TableCell><TableCell sx={{ pt: 1.25 }}><Tooltip title="Remove factor"><IconButton aria-label={`Remove factor ${props.factor.name}`} color="error" onClick={() => props.onDelete(props.factor)}><Trash2 size={17} /></IconButton></Tooltip></TableCell></TableRow>
 }
 
-function RepositoryDropZone() {
-  const droppable = useDroppable({ id: 'repository-list-end' })
-  return <TableRow ref={droppable.setNodeRef} sx={{ bgcolor: droppable.isOver ? 'primary.50' : 'transparent' }}><TableCell colSpan={6} sx={{ py: 0.5, borderBottom: 'none' }}><Typography variant="body2" color="text.secondary">Drop here to rank a repository last.</Typography></TableCell></TableRow>
+function RepositoriesTab(props: { repositories: ProfileRepository[]; factors: RepositoryPriorityFactor[]; tiers: RepositoryTier[]; enabled: boolean; defaultTierId?: string; onAdd: (fullName: string, tierId: string) => Promise<void>; onUpdate: (repository: ProfileRepository, owner: string, name: string, tierId: string) => Promise<string[]>; onRating: (repository: ProfileRepository, factor: RepositoryPriorityFactor, rating: number) => Promise<void>; onDelete: (repository: ProfileRepository) => void }) {
+  const [newRepository, setNewRepository] = useState('')
+  const [tierId, setTierId] = useState('')
+  const [displayOrder, setDisplayOrder] = useState<string[] | null>(null)
+  const repositoryColumnWidth = 300
+  const tierColumnWidth = 170
+  const stickyRepositoryColumn = { position: 'sticky', left: 0, zIndex: 2, minWidth: repositoryColumnWidth, width: repositoryColumnWidth, bgcolor: 'background.paper' }
+  const stickyTierColumn = { position: 'sticky', left: repositoryColumnWidth, zIndex: 2, minWidth: tierColumnWidth, width: tierColumnWidth, bgcolor: 'background.paper' }
+  const stickyHeaderColumn = { zIndex: 4, bgcolor: 'background.paper' }
+  useEffect(() => { if (!tierId && props.defaultTierId) setTierId(props.defaultTierId) }, [props.defaultTierId, tierId])
+  useEffect(() => {
+    if (!displayOrder)
+      return
+    const repositoryIds = new Set(props.repositories.map((repository) => repository.id))
+    const next = displayOrder.filter((id) => repositoryIds.has(id))
+    for (const repository of props.repositories) {
+      if (!next.includes(repository.id))
+        next.push(repository.id)
+    }
+    if (next.join('|') !== displayOrder.join('|'))
+      setDisplayOrder(next)
+  }, [displayOrder, props.repositories])
+  const repositoryById = new Map(props.repositories.map((repository) => [repository.id, repository]))
+  const repositories = displayOrder
+    ? displayOrder.map((id) => repositoryById.get(id)).filter((repository): repository is ProfileRepository => Boolean(repository))
+    : props.repositories
+
+  return <Stack spacing={2}><Card variant="outlined"><CardContent><Stack spacing={2}><SectionTitle icon={<FolderGit2 size={20} />} title="Repositories" /><Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ alignItems: { md: 'flex-start' } }}><TextField label="owner/repository" value={newRepository} disabled={!props.enabled} onChange={(event) => setNewRepository(event.target.value)} fullWidth /><TextField select label="Tier" value={tierId} disabled={!props.enabled || !props.tiers.length} onChange={(event) => setTierId(event.target.value)} sx={{ minWidth: 190 }}>{props.tiers.map((tier) => <MenuItem key={tier.id} value={tier.id}>{tier.name} ({tier.score})</MenuItem>)}</TextField><Button variant="contained" startIcon={<Plus size={17} />} disabled={!props.enabled || !newRepository || !tierId} onClick={() => void props.onAdd(newRepository, tierId).then(() => setNewRepository(''))}>Add</Button><Button variant="outlined" disabled={!props.repositories.length} onClick={() => setDisplayOrder([...props.repositories].sort((left, right) => right.score - left.score || left.fullName.localeCompare(right.fullName)).map((repository) => repository.id))}>Sort by score</Button></Stack><Typography variant="body2" color="text.secondary">Repository score is tier score plus factor ratings. Rating edits save automatically without reordering rows until you click Sort by score.</Typography></Stack></CardContent></Card><Card variant="outlined"><TableContainer aria-label="Repository scoring grid" data-testid="repositories-table-container" sx={{ overflow: 'auto', maxHeight: { xs: 'calc(100dvh - 260px)', md: 'calc(100dvh - 300px)' }, minHeight: repositories.length ? { xs: 320, md: 360 } : undefined, scrollbarGutter: 'stable', overscrollBehavior: 'contain' }}><Table stickyHeader size="small" sx={{ minWidth: Math.max(820, 600 + props.factors.length * 132) }}><TableHead><TableRow><TableCell data-testid="repositories-sticky-repository-header" sx={{ ...stickyRepositoryColumn, ...stickyHeaderColumn }}>Repository</TableCell><TableCell data-testid="repositories-sticky-tier-header" sx={{ ...stickyTierColumn, ...stickyHeaderColumn }}>Tier</TableCell>{props.factors.map((factor) => <TableCell key={factor.id} align="center" sx={{ minWidth: 132 }}><Stack direction="row" spacing={0.5} sx={{ alignItems: 'center', justifyContent: 'center' }}><Typography variant="body2" sx={{ fontWeight: 700 }}>{factor.name}</Typography>{factor.description && <Tooltip title={factor.description}><Info size={15} /></Tooltip>}</Stack><Typography variant="caption" color="text.secondary">x{factor.weight}</Typography></TableCell>)}<TableCell align="right" sx={{ minWidth: 110 }}>Score</TableCell><TableCell sx={{ minWidth: 220 }}>Validation</TableCell><TableCell width={54} /></TableRow></TableHead><TableBody>{repositories.map((repository) => <RepositoryRow key={repository.id} repository={repository} factors={props.factors} tiers={props.tiers} stickyRepositoryColumn={stickyRepositoryColumn} stickyTierColumn={stickyTierColumn} onUpdate={props.onUpdate} onRating={props.onRating} onDelete={props.onDelete} />)}{repositories.length === 0 && <TableRow><TableCell colSpan={props.factors.length + 5}><Typography color="text.secondary">Add at least one repository before running this profile.</Typography></TableCell></TableRow>}</TableBody></Table></TableContainer></Card></Stack>
+}
+
+function RepositoryRow(props: { repository: ProfileRepository; factors: RepositoryPriorityFactor[]; tiers: RepositoryTier[]; stickyRepositoryColumn: object; stickyTierColumn: object; onUpdate: (repository: ProfileRepository, owner: string, name: string, tierId: string) => Promise<string[]>; onRating: (repository: ProfileRepository, factor: RepositoryPriorityFactor, rating: number) => Promise<void>; onDelete: (repository: ProfileRepository) => void }) {
+  const [owner, setOwner] = useState(props.repository.owner); const [name, setName] = useState(props.repository.name); const [tierId, setTierId] = useState(props.repository.repositoryTierId)
+  const [saveError, setSaveError] = useState('')
+  useEffect(() => { setOwner(props.repository.owner); setName(props.repository.name); setTierId(props.repository.repositoryTierId); setSaveError('') }, [props.repository.id, props.repository.owner, props.repository.name, props.repository.repositoryTierId])
+  useEffect(() => {
+    if (owner === props.repository.owner && name === props.repository.name && tierId === props.repository.repositoryTierId)
+      return
+    const localIssues = validateRepositoryDraft(owner, name, tierId)
+    if (localIssues.length > 0)
+      return
+    const timer = window.setTimeout(() => {
+      void props.onUpdate(props.repository, owner, name, tierId)
+        .then((messages) => setSaveError(messages[0] ?? ''))
+        .catch((reason) => setSaveError(messageOf(reason)))
+    }, 650)
+    return () => window.clearTimeout(timer)
+  }, [owner, name, tierId, props.repository.id, props.repository.owner, props.repository.name, props.repository.repositoryTierId, props.repository.rowVersion])
+  const localIssues = validateRepositoryDraft(owner, name, tierId)
+  const rowIssues = [...localIssues, ...(saveError ? [{ severity: 'error', message: saveError }] : []), ...props.repository.validation]
+  const hasIssues = rowIssues.length > 0
+  const ratings = new Map(props.repository.ratings.map((rating) => [rating.repositoryPriorityFactorId, rating.rating]))
+  return <TableRow sx={{ outline: hasIssues ? '2px solid' : undefined, outlineColor: hasIssues ? 'error.main' : undefined, outlineOffset: '-2px' }}><TableCell data-testid={`repository-sticky-cell-${props.repository.id}`} sx={props.stickyRepositoryColumn}><Stack direction="row" spacing={0.5} sx={{ alignItems: 'flex-start' }}><TextField aria-label={`Owner for ${props.repository.fullName}`} size="small" value={owner} error={hasIssues} onChange={(event) => { setSaveError(''); setOwner(event.target.value) }} sx={{ minWidth: 120 }} /><Typography sx={{ pt: 1 }}>/</Typography><TextField aria-label={`Repository for ${props.repository.fullName}`} size="small" value={name} error={hasIssues} onChange={(event) => { setSaveError(''); setName(event.target.value) }} sx={{ minWidth: 140 }} /></Stack></TableCell><TableCell data-testid={`repository-tier-sticky-cell-${props.repository.id}`} sx={props.stickyTierColumn}><TextField select aria-label={`Tier for ${props.repository.fullName}`} size="small" value={tierId} error={hasIssues && !tierId} onChange={(event) => { setSaveError(''); setTierId(event.target.value) }} sx={{ minWidth: 150 }}>{props.tiers.map((tier) => <MenuItem key={tier.id} value={tier.id}>{tier.name} ({tier.score})</MenuItem>)}</TextField></TableCell>{props.factors.map((factor) => <TableCell key={factor.id} align="center"><TextField select aria-label={`${factor.name} rating for ${props.repository.fullName}`} size="small" value={ratings.get(factor.id) ?? 1} onChange={(event) => void props.onRating(props.repository, factor, Number(event.target.value))} sx={{ width: 76 }}>{[1, 2, 3, 4, 5].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</TextField></TableCell>)}<TableCell align="right"><Typography sx={{ fontWeight: 800 }}>{props.repository.score}</Typography><Typography variant="caption" color="text.secondary">tier {props.repository.repositoryTierScore} + factors {props.repository.factorScore}</Typography></TableCell><TableCell>{hasIssues ? <Tooltip title={rowIssues.map((issue) => issue.message).join(' ')}><Chip color="error" size="small" label={rowIssues[0].message} sx={{ maxWidth: 210 }} /></Tooltip> : <Chip color="success" size="small" label="Valid" />}</TableCell><TableCell><Tooltip title="Remove repository"><IconButton aria-label="Remove repository" color="error" onClick={() => props.onDelete(props.repository)}><Trash2 size={17} /></IconButton></Tooltip></TableCell></TableRow>
 }
 
 function LabelsTab(props: {
   labels: ProfileLabel[]
   discovery: LabelDiscovery | null
+  discovering: boolean
   enabled: boolean
   hasToken: boolean
   onDiscover: (refresh: boolean) => void
@@ -464,10 +679,11 @@ function LabelsTab(props: {
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ justifyContent: 'space-between', alignItems: { sm: 'center' } }}>
         <SectionTitle icon={<Tags size={20} />} title="Labels" />
         <Stack direction="row" spacing={1}>
-          <Button variant="outlined" startIcon={<RefreshCcw size={17} />} disabled={!props.enabled || !props.hasToken} onClick={() => props.onDiscover(false)}>Discover labels</Button>
-          <Tooltip title="Bypass cached repository issues"><span><IconButton aria-label="Refresh labels from GitHub" disabled={!props.enabled || !props.hasToken} onClick={() => props.onDiscover(true)}><RefreshCcw size={18} /></IconButton></span></Tooltip>
+          <Button variant="outlined" startIcon={<RefreshCcw size={17} />} disabled={!props.enabled || !props.hasToken || props.discovering} onClick={() => props.onDiscover(false)}>{props.discovering ? 'Discovering...' : 'Discover labels'}</Button>
+          <Tooltip title="Bypass cached repository issues"><span><IconButton aria-label="Refresh labels from GitHub" disabled={!props.enabled || !props.hasToken || props.discovering} onClick={() => props.onDiscover(true)}><RefreshCcw size={18} /></IconButton></span></Tooltip>
         </Stack>
       </Stack>
+      {props.discovering && <Stack spacing={1}><LinearProgress /><Typography variant="body2" color="text.secondary">Discovering labels from configured repositories...</Typography></Stack>}
       {!props.hasToken && <Alert severity="info">Save a GitHub token to discover labels from configured repositories.</Alert>}
       {props.discovery && <Alert severity={props.discovery.newLabelCount > 0 || props.discovery.removedLabelCount > 0 ? 'warning' : 'success'}>{[
         props.discovery.newLabelCount > 0 ? `${props.discovery.newLabelCount} new label${props.discovery.newLabelCount === 1 ? '' : 's'} need ranking or must be ignored.` : '',
@@ -659,13 +875,120 @@ function formatDate(value?: string) {
 function CacheTab({ cache, quota, canRun, busy, onRefresh }: { cache: TaskRunCache | null; quota: TaskRunQuota | null; canRun: boolean; busy: boolean; onRefresh: () => void }) { return <Card variant="outlined"><CardContent><Stack spacing={2}><Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}><SectionTitle icon={<Database size={20} />} title="Cache" /><Button variant="outlined" color="warning" startIcon={<RefreshCcw size={17} />} disabled={!canRun || busy} onClick={onRefresh}>Clear cache and refresh</Button></Stack>{cache ? <><Alert severity={cache.status === 'cache' ? 'success' : 'info'}>Last run: {cache.status}. {cache.hitCount} cache hit(s), {cache.gitHubRequestCount} GitHub request(s), TTL {cache.durationSeconds}s.</Alert><Table size="small"><TableHead><TableRow><TableCell>Operation</TableCell><TableCell>Target</TableCell><TableCell>Source</TableCell></TableRow></TableHead><TableBody>{cache.operations.map((operation) => <TableRow key={`${operation.operation}-${operation.target}`}><TableCell>{operation.operation}</TableCell><TableCell>{operation.target}</TableCell><TableCell><Chip size="small" label={operation.source} /></TableCell></TableRow>)}</TableBody></Table></> : <Typography color="text.secondary">No run data yet.</Typography>}{quota && <Alert severity={quota.status === 'ok' ? 'success' : quota.status === 'low' ? 'warning' : 'info'}>Quota: {quota.status}{quota.remaining === undefined ? '' : `, ${quota.remaining}/${quota.limit ?? '?'} remaining`}. Source: {quota.source}.</Alert>}</Stack></CardContent></Card> }
 
 function SectionTitle({ icon, title }: { icon: ReactNode; title: string }) { return <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>{icon}<Typography variant="h2">{title}</Typography></Stack> }
-function profileToDraft(profile: ProfileDetail): ProfileDraft { return { id: profile.id, name: profile.name, labelLines: profile.labelLines, taskLimit: profile.taskLimit, delayInMilliseconds: profile.delayInMilliseconds, priorityFactors: profile.priorityFactors, repositories: profile.repositories, labels: profile.labels } }
-function summaryFromDetail(profile: ProfileDetail): ProfileSummary { const { labelLines: _, priorityFactors: __, repositories: ___, labels: ____, createdAt: _____, ...summary } = profile; return summary }
+function themeLabel(preference: ThemePreference) { return themeOptions.find((option) => option.value === preference)?.label ?? 'System' }
+function themeIcon(preference: ThemePreference, size: number): ReactNode {
+  if (preference === 'light')
+    return <Sun size={size} />
+  if (preference === 'dark')
+    return <Moon size={size} />
+  return <Monitor size={size} />
+}
+function profileToDraft(profile: ProfileDetail): ProfileDraft {
+  const factors = profile.repositoryPriorityFactors ?? []
+  return {
+    id: profile.id,
+    name: profile.name,
+    labelLines: profile.labelLines,
+    taskLimit: profile.taskLimit,
+    delayInMilliseconds: profile.delayInMilliseconds,
+    priorityFactors: profile.priorityFactors,
+    repositoryPriorityFactors: factors,
+    repositories: recalculateRepositories((profile.repositories ?? []).map((repository) => ({ ...repository, ratings: repository.ratings ?? [] })), factors),
+    labels: profile.labels ?? [],
+  }
+}
+function summaryFromDetail(profile: ProfileDetail): ProfileSummary { const { labelLines: _, priorityFactors: __, repositoryPriorityFactors: ___, repositories: ____, labels: _____, createdAt: ______, ...summary } = profile; return summary }
 function profileInitials(name?: string) { return name?.trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || '?' }
 function toSaveRequest(draft: ProfileDraft, token: string) { return { name: draft.name, labelLines: draft.labelLines, taskLimit: draft.taskLimit, delayInMilliseconds: draft.delayInMilliseconds, priorityFactors: draft.priorityFactors, ...(token ? { gitHubToken: token } : {}) } }
 function toRunRequest(draft: ProfileDraft) { return { labelLines: draft.labelLines, taskLimit: draft.taskLimit, delayInMilliseconds: draft.delayInMilliseconds, priorityFactors: draft.priorityFactors } }
 function splitRepository(value: string) { const [owner, name, ...rest] = value.trim().split('/'); return owner && name && rest.length === 0 ? { owner, name } : null }
 function messageOf(reason: unknown) { return reason instanceof Error ? reason.message : 'Request failed.' }
+
+function tabIndexFromLocation() {
+  if (typeof window === 'undefined')
+    return 0
+  const slug = new URLSearchParams(window.location.search).get('tab')
+  const index = slug ? tabSlugs.indexOf(slug) : -1
+  return index >= 0 ? index : 0
+}
+
+function updateTabUrl(index: number, replace = false) {
+  if (typeof window === 'undefined')
+    return
+  const slug = tabSlugs[index] ?? tabSlugs[0]
+  const url = new URL(window.location.href)
+  if (url.searchParams.get('tab') === slug)
+    return
+  url.searchParams.set('tab', slug)
+  const next = `${url.pathname}${url.search}${url.hash}`
+  if (replace)
+    window.history.replaceState(null, '', next)
+  else
+    window.history.pushState(null, '', next)
+}
+
+function validateRepositoryDraft(owner: string, name: string, tierId: string) {
+  const issues: RepositoryValidationIssue[] = []
+  if (!owner.trim() || !name.trim())
+    issues.push({ severity: 'error', message: 'Repository owner and name are required.' })
+  else if (!isRepositoryCoordinatePart(owner.trim()) || !isRepositoryCoordinatePart(name.trim()))
+    issues.push({ severity: 'error', message: 'Use only letters, numbers, dots, dashes, or underscores.' })
+  if (!tierId)
+    issues.push({ severity: 'error', message: 'Choose a valid repository tier.' })
+  return issues
+}
+
+function isRepositoryCoordinatePart(value: string) {
+  return value.length <= 100 && /^[A-Za-z0-9._-]+$/.test(value)
+}
+
+function applyRepositoryRating(repositories: ProfileRepository[], factors: RepositoryPriorityFactor[], repositoryId: string, factorId: string, rating: number, rowVersion: number) {
+  return recalculateRepositories(repositories.map((repository) => {
+    if (repository.id !== repositoryId)
+      return repository
+    const ratings = repository.ratings.some((candidate) => candidate.repositoryPriorityFactorId === factorId)
+      ? repository.ratings.map((candidate) => candidate.repositoryPriorityFactorId === factorId ? { ...candidate, rating, rowVersion } : candidate)
+      : [...repository.ratings, { repositoryPriorityFactorId: factorId, rating, rowVersion }]
+    return { ...repository, ratings }
+  }), factors)
+}
+
+function recalculateRepositories(repositories: ProfileRepository[], factors: RepositoryPriorityFactor[]) {
+  return repositories.map((repository) => {
+    const ratings = new Map(repository.ratings.map((rating) => [rating.repositoryPriorityFactorId, rating.rating]))
+    const factorScore = factors.reduce((total, factor) => total + (ratings.get(factor.id) ?? 1) * factor.weight, 0)
+    return { ...repository, factorScore, score: repository.repositoryTierScore + factorScore }
+  })
+}
+
+function latestProfileFrom(reason: unknown) {
+  if (!(reason instanceof ApiRequestError) || reason.status !== 409 || typeof reason.body !== 'object' || reason.body === null)
+    return null
+  return (reason.body as { latestProfile?: ProfileDetail }).latestProfile ?? null
+}
+
+function isOfflineError(reason: unknown) {
+  return reason instanceof TypeError || (reason instanceof ApiRequestError && reason.status >= 500)
+}
+
+async function retryRequest<T>(operation: () => Promise<T>) {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await operation()
+    } catch (reason) {
+      lastError = reason
+      if (reason instanceof ApiRequestError && reason.status < 500)
+        throw reason
+      await delay(250 * (attempt + 1))
+    }
+  }
+  throw lastError
+}
+
+function delay(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+}
 
 function sortLabels(labels: ProfileLabel[]) {
   return labels
