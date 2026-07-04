@@ -44,7 +44,7 @@ jobs:
           thresholds: '50 74'
 
       - name: Add Coverage PR Comment
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         if: github.event_name == 'pull_request' && always() # Ensures that the step runs no matter the outcome of previous steps.
         with:
           recreate: true
